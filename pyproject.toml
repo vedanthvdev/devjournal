@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devjournal"
+version = "0.2.0"
+description = "Automated daily work journals for engineers. Pulls from Jira, GitLab, GitHub, Confluence, Cursor, and local git into your Obsidian vault."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Vedanth Vasudev" }]
+keywords = ["obsidian", "journal", "devlog", "jira", "gitlab", "github", "productivity"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Office/Business :: Scheduling",
+]
+dependencies = [
+    "requests>=2.28",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "responses>=0.23",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+devjournal = "devjournal.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/vedanthvasudev/devjournal"
+Repository = "https://github.com/vedanthvasudev/devjournal"
+Issues = "https://github.com/vedanthvasudev/devjournal/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devjournal"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
