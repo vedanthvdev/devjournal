@@ -1,0 +1,68 @@
+# devjournal configuration
+# ========================
+# Edit this file with your settings, then run: devjournal evening
+#
+# Tip: keep this file chmod 600 — it contains API tokens.
+
+# Path to your Obsidian vault (the folder containing your Journal/ directory)
+vault_path: ~/Documents/Obsidian Vault
+
+# Parent directory containing your git repositories
+repos_dir: ~/Code
+
+# ---------------------------------------------------------------------------
+# Collectors — enable only the integrations you use.
+# ---------------------------------------------------------------------------
+collectors:
+
+  # -- Jira (Atlassian) --
+  # Get your API token: https://id.atlassian.com/manage-profile/security/api-tokens
+  jira:
+    enabled: false
+    domain: yourcompany.atlassian.net
+    email: you@company.com
+    api_token: ""
+    projects: [PROJ1, PROJ2]
+
+  # -- Confluence --
+  # Shares authentication with Jira (same Atlassian credentials).
+  confluence:
+    enabled: false
+
+  # -- GitLab --
+  # Create a Personal Access Token with `read_api` scope.
+  # Works with gitlab.com and self-hosted instances.
+  gitlab:
+    enabled: false
+    url: https://gitlab.com
+    token: ""
+    username: your-username
+
+  # -- GitHub --
+  # Create a Personal Access Token (classic) with `repo` and `read:user` scopes.
+  # https://github.com/settings/tokens
+  github:
+    enabled: false
+    token: ""
+    username: your-username
+
+  # -- Local Git --
+  # Scans repos_dir for commits matching your email.
+  local_git:
+    enabled: true
+    author_email: you@company.com
+
+  # -- Cursor IDE --
+  # Parses Cursor agent transcripts and session data.
+  # No token needed — reads local files only.
+  cursor:
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# Schedule — automatic morning agenda and evening summary.
+# Run `devjournal schedule install` after editing.
+# ---------------------------------------------------------------------------
+schedule:
+  morning: "08:30"
+  evening: "17:00"
+  weekdays_only: true
