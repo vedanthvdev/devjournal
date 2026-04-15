@@ -1,0 +1,12 @@
+{
+  "hooks": [
+    {
+      "event": "stop",
+      "commands": [
+        {
+          "command": "$HOME/.config/devjournal/hooks/log-session-end.sh"
+        }
+      ]
+    }
+  ]
+}
