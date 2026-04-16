@@ -1,0 +1,67 @@
+name: Bug Report
+description: Report something that isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: When I run `devjournal evening`, the Jira section shows...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug.
+      placeholder: |
+        1. Set config with `jira.enabled: true`
+        2. Run `devjournal evening`
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error output
+      description: Run with `devjournal -v evening` and paste the output.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: devjournal version
+      description: Output of `devjournal --version`
+      placeholder: "devjournal X.Y.Z"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`
+      placeholder: "Python 3.12.3"

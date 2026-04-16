@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """GitHub collector — push events, pull requests, and reviews via the GitHub REST API."""
 
 from __future__ import annotations

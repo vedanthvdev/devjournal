@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """GitLab collector — push events, merge requests, and comments via the GitLab REST API."""
 
 from __future__ import annotations

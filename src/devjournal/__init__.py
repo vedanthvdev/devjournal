@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """devjournal — Automated daily work journals for engineers."""
 
 from __future__ import annotations
