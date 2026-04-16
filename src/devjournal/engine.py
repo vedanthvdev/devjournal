@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Orchestrator that discovers collectors, runs them, and writes results to the note.
 
 The engine is the single coordination point — collectors and formatters

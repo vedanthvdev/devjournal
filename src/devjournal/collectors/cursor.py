@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Cursor collector — parses AI coding agent sessions from Cursor IDE.
 
 Two data sources:

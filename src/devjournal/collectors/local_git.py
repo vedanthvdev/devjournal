@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Local git collector — scans local repositories for commits by the user today."""
 
 from __future__ import annotations

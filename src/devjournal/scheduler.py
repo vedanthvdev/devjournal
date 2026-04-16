@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """OS-level scheduling — generates and installs launchd plists (macOS) or cron jobs (Linux)."""
 
 from __future__ import annotations
