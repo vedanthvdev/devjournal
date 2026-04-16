@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from devjournal.config import get_collector_config, is_collector_enabled, load_config
+from devjournal.config import (
+    get_collector_config,
+    get_repos_dirs,
+    is_collector_enabled,
+    load_config,
+)
 
 
 def test_load_config_from_file(tmp_path):
@@ -186,3 +191,50 @@ def test_confluence_own_config_takes_precedence():
     cfg = get_collector_config(config, "confluence")
     assert cfg["domain"] == "conf.atlassian.net"
     assert cfg["api_token"] == "conf-tok"
+
+
+# ---------------------------------------------------------------------------
+# get_repos_dirs — multi-path normalisation
+# ---------------------------------------------------------------------------
+
+
+def test_get_repos_dirs_legacy_string():
+    """A bare string (legacy shape) becomes a one-element list."""
+    assert get_repos_dirs({"repos_dir": "/home/me/code"}) == ["/home/me/code"]
+
+
+def test_get_repos_dirs_list_shape():
+    assert get_repos_dirs({"repos_dir": ["/a", "/b"]}) == ["/a", "/b"]
+
+
+def test_get_repos_dirs_strips_blanks_and_non_strings():
+    """Blanks and garbage entries are silently dropped — a mangled config
+    must not break the collector. The helper is read-only so we don't
+    rewrite the user's config; only the consumer-facing view is cleaned.
+    """
+    raw = {"repos_dir": ["/a", "", "  ", None, 42, "/b"]}  # type: ignore[list-item]
+    assert get_repos_dirs(raw) == ["/a", "/b"]
+
+
+def test_get_repos_dirs_missing_returns_empty():
+    assert get_repos_dirs({}) == []
+    assert get_repos_dirs({"repos_dir": None}) == []
+    assert get_repos_dirs({"repos_dir": ""}) == []
+    assert get_repos_dirs({"repos_dir": []}) == []
+
+
+def test_load_config_expands_tilde_in_list(tmp_path, monkeypatch):
+    """``load_config`` expanded ``~`` for the legacy single-path form; the
+    list form must get the same treatment per entry.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "vault_path: /tmp/vault\n"
+        "repos_dir:\n"
+        "  - ~/Code\n"
+        "  - ~/work\n"
+    )
+    cfg = load_config(config_file)
+    # Paths are normalised to absolute strings pointing inside ``tmp_path``.
+    assert cfg["repos_dir"] == [str(tmp_path / "Code"), str(tmp_path / "work")]

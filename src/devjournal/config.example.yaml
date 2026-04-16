@@ -11,8 +11,12 @@
 # Path to your Obsidian vault (the folder containing your Journal/ directory)
 vault_path: ~/Documents/Obsidian Vault
 
-# Parent directory containing your git repositories
-repos_dir: ~/Code
+# Parent directories containing your git repositories. Accepts either a
+# single path (legacy shape) or a list of paths. Each entry is scanned one
+# level deep for directories containing a ``.git`` folder.
+repos_dir:
+  - ~/Code
+  # - ~/work
 
 # ---------------------------------------------------------------------------
 # Collectors — enable only the integrations you use.

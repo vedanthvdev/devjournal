@@ -118,12 +118,46 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
     config["vault_path"] = str(Path(config["vault_path"]).expanduser())
 
-    if config.get("repos_dir"):
-        config["repos_dir"] = str(Path(config["repos_dir"]).expanduser())
+    # ``repos_dir`` is polymorphic on disk — historically a single string,
+    # now also a list of strings. Normalise paths in place but keep the
+    # original shape so re-serialising the config (e.g. from the setup UI)
+    # doesn't rewrite single-path users into lists against their will.
+    raw_repos = config.get("repos_dir")
+    if isinstance(raw_repos, str) and raw_repos:
+        config["repos_dir"] = str(Path(raw_repos).expanduser())
+    elif isinstance(raw_repos, list):
+        config["repos_dir"] = [
+            str(Path(entry).expanduser()) for entry in raw_repos if isinstance(entry, str) and entry.strip()
+        ]
 
     _resolve_keychain_secrets(config)
 
     return config
+
+
+def get_repos_dirs(config: dict[str, Any]) -> list[str]:
+    """Return the configured ``repos_dir`` value as a normalised list.
+
+    Accepts three on-disk shapes, all of which predate the UI:
+
+    * ``repos_dir: "~/Code"``           — legacy single-path string
+    * ``repos_dir: ["~/Code", "~/work"]`` — new list form (setup UI writes this)
+    * absent / empty                    — returns ``[]``
+
+    Any non-string entries in a list are dropped silently; blank entries are
+    skipped. Paths are *not* re-expanded here — callers that round-trip
+    through :func:`load_config` already see expanded paths, and callers that
+    read the raw config directly (e.g. the setup server) handle expansion
+    themselves. Keeping this helper pure-read means it's safe to call from
+    probe code that must not mutate the config it inspects.
+    """
+    raw = config.get("repos_dir")
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        return [stripped] if stripped else []
+    if isinstance(raw, list):
+        return [entry.strip() for entry in raw if isinstance(entry, str) and entry.strip()]
+    return []
 
 
 _ATLASSIAN_KEYS = ("domain", "email", "api_token")

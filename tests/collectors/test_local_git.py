@@ -68,3 +68,96 @@ def test_collect_handles_git_timeout(tmp_path):
             "author_email": "me@test.com",
         })
     assert result.items == []
+
+
+def test_collect_scans_multiple_dirs(tmp_path):
+    """With ``repos_dir`` as a list, commits from every root end up in the
+    result — unique repo names are reported bare, not prefixed.
+    """
+    root_a = tmp_path / "code"
+    root_b = tmp_path / "work"
+    root_a.mkdir()
+    root_b.mkdir()
+    (root_a / "alpha").mkdir()
+    (root_a / "alpha" / ".git").mkdir()
+    (root_b / "beta").mkdir()
+    (root_b / "beta" / ".git").mkdir()
+
+    def fake_run(args, **kwargs):
+        # ``cwd`` tells us which repo we're scanning — return distinct output
+        # so the assertion can tell the two rows apart.
+        cwd = kwargs.get("cwd", "")
+        if "alpha" in cwd:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="a1 from alpha\n")
+        if "beta" in cwd:
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="b1 from beta\n")
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="")
+
+    with patch("subprocess.run", side_effect=fake_run):
+        collector = LocalGitCollector()
+        result = collector.collect(date(2026, 4, 15), {
+            "repos_dir": [str(root_a), str(root_b)],
+            "author_email": "me@test.com",
+        })
+
+    projects = sorted(item["project"] for item in result.items)
+    assert projects == ["alpha", "beta"], projects
+    messages = sorted(item["message"] for item in result.items)
+    assert messages == ["from alpha", "from beta"]
+
+
+def test_collect_skips_missing_dir_in_list(tmp_path):
+    """A missing root in a list of roots must not prevent scanning the others.
+    This is the user-facing behaviour of "I moved one of my code folders
+    yesterday and forgot to update config" — the other folders keep working.
+    """
+    missing = tmp_path / "gone"
+    real = tmp_path / "here"
+    real.mkdir()
+    repo = real / "proj"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+
+    fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="abc fixed thing\n")
+    with patch("subprocess.run", return_value=fake_result):
+        collector = LocalGitCollector()
+        result = collector.collect(date(2026, 4, 15), {
+            "repos_dir": [str(missing), str(real)],
+            "author_email": "me@test.com",
+        })
+    assert [item["project"] for item in result.items] == ["proj"]
+
+
+def test_collect_disambiguates_name_collisions_across_roots(tmp_path):
+    """Two directories named ``foo`` under different roots must not silently
+    merge into a single row — the display label gets the root appended so
+    the user can tell them apart in the evening note.
+    """
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    (root_a / "foo").mkdir()
+    (root_a / "foo" / ".git").mkdir()
+    (root_b / "foo").mkdir()
+    (root_b / "foo" / ".git").mkdir()
+
+    def fake_run(args, **kwargs):
+        cwd = str(kwargs.get("cwd", ""))
+        if cwd.startswith(str(root_a)):
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="a1 from A\n")
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="b1 from B\n")
+
+    with patch("subprocess.run", side_effect=fake_run):
+        collector = LocalGitCollector()
+        result = collector.collect(date(2026, 4, 15), {
+            "repos_dir": [str(root_a), str(root_b)],
+            "author_email": "me@test.com",
+        })
+
+    projects = sorted(item["project"] for item in result.items)
+    assert len(projects) == 2, projects
+    # Exactly one row per root, each annotated with its root path.
+    assert all(p.startswith("foo (") for p in projects), projects
+    assert any(str(root_a) in p for p in projects)
+    assert any(str(root_b) in p for p in projects)

@@ -30,7 +30,10 @@ import json
 import logging
 import mimetypes
 import os
+import platform
 import secrets
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -39,7 +42,7 @@ from datetime import date as _date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 import yaml
@@ -48,6 +51,7 @@ from devjournal import __version__
 from devjournal.config import (
     DEFAULT_CONFIG_PATH,
     get_collector_config,
+    get_repos_dirs,
 )
 from devjournal.setup.probes import PROBES
 from devjournal.setup.secrets import SecretStore
@@ -57,6 +61,16 @@ log = logging.getLogger("devjournal")
 IDLE_TIMEOUT_SECONDS = 30 * 60
 MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MiB — payloads here are tiny
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+# The folder picker shells out to a native OS dialog and blocks the handler
+# thread until the user chooses a folder or cancels. 10 minutes is well above
+# "looked at your phone for a while" but below "forgot about it overnight" —
+# we don't want a ghost dialog sitting there holding a thread forever.
+_FOLDER_PICKER_TIMEOUT_SECONDS = 10 * 60
+
+# (title) -> (path | None, error | None). See _native_folder_picker for the
+# contract: path == None with error == None means "user cancelled".
+_FolderPickerCallable = Callable[[str], "tuple[str | None, str | None]"]
 
 
 class _BadRequest(Exception):
@@ -82,6 +96,19 @@ _SECRET_CONFIG_KEYS: dict[str, str] = {
     "gitlab": "token",
     "github": "token",
 }
+
+# Mask format for secret previews sent to the browser. Fixed 8 bullets +
+# the token's last 4 chars — deliberately does NOT match the real token
+# length, because different API providers issue tokens of different lengths
+# and even that is more information than we need to leak back to a
+# loopback HTTP client. For tokens shorter than
+# ``_PREVIEW_MIN_LEN_FOR_TAIL`` we show bullets only, so a malformed or
+# truncated secret doesn't have an unsafely large fraction of its bytes
+# echoed back. A real Jira/GitLab/GitHub PAT is always well above this
+# threshold.
+_PREVIEW_MASK = "\u2022" * 8  # • character, renders clearly across platforms
+_PREVIEW_TAIL_LEN = 4
+_PREVIEW_MIN_LEN_FOR_TAIL = 8
 _ASSET_MIMES = {
     ".html": "text/html; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
@@ -98,6 +125,110 @@ def _is_loopback(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Native folder picker — used by POST /api/browse-folder so the UI can offer
+# a real OS "choose folder" dialog instead of forcing the user to hand-type
+# long paths. The picker itself is injectable via ``_ServerState.folder_picker``
+# so tests never actually spawn a GUI dialog and headless CI stays deterministic.
+# ---------------------------------------------------------------------------
+
+
+def _native_folder_picker(title: str) -> tuple[str | None, str | None]:
+    """Prompt the user for a folder using the OS's native dialog.
+
+    Returns ``(path, error)``:
+
+    * ``(path, None)`` — user picked ``path`` (absolute, tildes already
+      expanded by the OS).
+    * ``(None, None)`` — user cancelled the dialog.
+    * ``(None, error)`` — the picker couldn't run (unsupported platform,
+      missing binary, timeout, or unexpected subprocess failure).
+
+    We deliberately keep error strings short and non-sensitive so the UI
+    can render them verbatim without leaking host details.
+    """
+    system = platform.system()
+
+    # macOS ships osascript with the OS, and AppleScript's ``choose folder``
+    # returns a POSIX path already tilde-expanded. The ``try … on error number
+    # -128 … end try`` block traps the user clicking Cancel so we can
+    # distinguish cancel (empty stdout, success exit) from a real failure.
+    if system == "Darwin":
+        script = (
+            'try\n'
+            f'  set p to POSIX path of (choose folder with prompt "{title}")\n'
+            '  return p\n'
+            'on error number -128\n'
+            '  return ""\n'
+            'end try'
+        )
+        try:
+            out = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=_FOLDER_PICKER_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return (None, "Folder picker timed out.")
+        except FileNotFoundError:
+            return (None, "osascript not found — folder picker unavailable.")
+        if out.returncode != 0:
+            return (None, "Folder picker failed.")
+        path = out.stdout.strip()
+        return (path or None, None)
+
+    # Linux: prefer zenity (GTK) then kdialog (KDE); fall back to an error
+    # if neither is on PATH. Most distros ship at least one.
+    if system == "Linux":
+        if shutil.which("zenity"):
+            argv = ["zenity", "--file-selection", "--directory", "--title", title]
+        elif shutil.which("kdialog"):
+            argv = ["kdialog", "--getexistingdirectory", ".", "--title", title]
+        else:
+            return (
+                None,
+                "Folder picker requires zenity or kdialog — install one via your package manager.",
+            )
+        try:
+            out = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=_FOLDER_PICKER_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return (None, "Folder picker timed out.")
+        # Both zenity and kdialog exit non-zero when the user cancels — we
+        # treat any non-zero exit with empty stdout as a cancel, not an error.
+        path = out.stdout.strip()
+        if not path:
+            return (None, None)
+        return (path, None)
+
+    # Windows and anything else falls through — we don't currently ship a
+    # picker there, but the UI degrades gracefully to plain text input.
+    return (None, f"Folder picker not supported on {system}.")
+
+
+def _native_folder_picker_available() -> bool:
+    """Best-effort check that :func:`_native_folder_picker` can actually run.
+
+    The UI uses this to decide whether to render ``Browse…`` buttons —
+    showing them on a host where the picker will just fail is worse than
+    hiding them. We only inspect ``$PATH`` (no subprocess) so the probe is
+    cheap enough to run on every GET /api/config.
+    """
+    system = platform.system()
+    if system == "Darwin":
+        return shutil.which("osascript") is not None
+    if system == "Linux":
+        return shutil.which("zenity") is not None or shutil.which("kdialog") is not None
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +260,16 @@ class _ServerState:
         # folder inside it (no __init__.py), force-included by hatch's build
         # config.
         self.assets_dir = Path(str(importlib.resources.files("devjournal.setup"))) / "assets"
+        # Folder picker is swappable so tests can inject a deterministic stub
+        # (native dialogs can't run in CI). Production code uses the OS-native
+        # picker defined at module level. ``folder_picker_available`` is a
+        # cheap path-only probe so the UI can hide the ``Browse…`` buttons on
+        # hosts where they'd just fail; tests stub this to toggle UI visibility
+        # without touching the real ``PATH``.
+        self.folder_picker: _FolderPickerCallable = _native_folder_picker
+        self.folder_picker_available: Callable[[], bool] = (
+            _native_folder_picker_available
+        )
 
     def touch(self) -> None:
         self.last_activity = time.monotonic()
@@ -179,6 +320,40 @@ def _build_secrets_present(config: dict, store: SecretStore) -> dict[str, bool]:
     return present
 
 
+def _mask_token(token: str) -> str:
+    """Return the browser-safe preview for ``token``.
+
+    Shape is always ``<8 bullets><last 4 chars>`` for real-sized tokens, or
+    bullets only when the token is suspiciously short. See the comment on
+    ``_PREVIEW_MASK`` for why the bullet count is fixed.
+    """
+    if len(token) < _PREVIEW_MIN_LEN_FOR_TAIL:
+        return _PREVIEW_MASK
+    return _PREVIEW_MASK + token[-_PREVIEW_TAIL_LEN:]
+
+
+def _build_secrets_preview(config: dict, store: SecretStore) -> dict[str, str | None]:
+    """Per-collector masked preview string, or ``None`` when no token exists.
+
+    Mirrors the resolution order of :func:`_build_secrets_present` so the two
+    helpers can never disagree on whether a collector has a token: if
+    ``secrets_present[x]`` is ``True`` then ``secrets_preview[x]`` is a real
+    string, and if ``False`` then it's ``None``. Confluence piggybacks on
+    Jira's preview when it has no token of its own, matching the rest of the
+    Atlassian-shared-credential story.
+    """
+    previews: dict[str, str | None] = {}
+    collectors = config.get("collectors", {}) or {}
+    for name, yaml_key in _SECRET_CONFIG_KEYS.items():
+        yaml_value = (collectors.get(name) or {}).get(yaml_key) or ""
+        result = store.read(name, yaml_value)
+        if not result.value and name == "confluence":
+            jira_value = (collectors.get("jira") or {}).get("api_token") or ""
+            result = store.read("jira", jira_value)
+        previews[name] = _mask_token(result.value) if result.value else None
+    return previews
+
+
 def _redact_config_for_client(config: dict) -> dict:
     """Strip token values before sending config to the browser."""
     safe = json.loads(json.dumps(config))  # deep copy via JSON
@@ -194,11 +369,14 @@ def _merge_save_payload(
     incoming: dict,
     secrets_payload: dict[str, Any],
     store: SecretStore,
-) -> tuple[dict, dict[str, bool], dict[str, str], list[str]]:
+) -> tuple[dict, dict[str, bool], dict[str, str | None], dict[str, str], list[str]]:
     """Merge the browser's edits into the on-disk config + keyring.
 
-    Returns ``(new_config, secrets_present, secrets_backend, write_errors)``.
+    Returns ``(new_config, secrets_present, secrets_preview, secrets_backend, write_errors)``.
 
+    * ``secrets_preview`` is the post-save masked preview map so the UI can
+      re-render the placeholder for a freshly-saved token without needing a
+      second round-trip to ``GET /api/config``.
     * ``secrets_backend`` maps each *changed* secret to ``"keyring"`` or
       ``"yaml"`` so the UI can render a per-collector status banner.
     * ``write_errors`` is a list of collector names whose keyring write
@@ -207,9 +385,23 @@ def _merge_save_payload(
       write.
     """
     result = json.loads(json.dumps(existing))  # start from disk state
-    for top_level in ("vault_path", "repos_dir"):
-        if top_level in incoming:
-            result[top_level] = incoming[top_level]
+    if "vault_path" in incoming:
+        result["vault_path"] = incoming["vault_path"]
+    if "repos_dir" in incoming:
+        # Accept either the legacy string form or the new list form. The UI
+        # always sends a list now, but keeping both shapes on the write path
+        # means a user who hand-edits config.yaml to a string and then saves
+        # via the UI doesn't get surprised. Blank entries are dropped so
+        # "Add path" rows the user never filled in don't persist.
+        raw = incoming["repos_dir"]
+        if isinstance(raw, list):
+            result["repos_dir"] = [
+                entry.strip()
+                for entry in raw
+                if isinstance(entry, str) and entry.strip()
+            ]
+        elif isinstance(raw, str):
+            result["repos_dir"] = raw
 
     if "schedule" in incoming and isinstance(incoming["schedule"], dict):
         result.setdefault("schedule", {})
@@ -263,7 +455,8 @@ def _merge_save_payload(
                 write_errors.append(collector)
 
     secrets_present = _build_secrets_present(result, store)
-    return result, secrets_present, secrets_backend, write_errors
+    secrets_preview = _build_secrets_preview(result, store)
+    return result, secrets_present, secrets_preview, secrets_backend, write_errors
 
 
 def _write_config(path: Path, config: dict) -> None:
@@ -431,6 +624,8 @@ class SetupHandler(BaseHTTPRequestHandler):
             return self._api_schedule()
         if route == "/api/run":
             return self._api_run()
+        if route == "/api/browse-folder":
+            return self._api_browse_folder()
         if route == "/api/shutdown":
             return self._api_shutdown()
         self._send_error_json(HTTPStatus.NOT_FOUND, "Unknown route")
@@ -466,13 +661,16 @@ class SetupHandler(BaseHTTPRequestHandler):
     def _api_get_config(self) -> None:
         config = _load_raw_config(self.state.config_path)
         secrets_present = _build_secrets_present(config, self.state.secret_store)
+        secrets_preview = _build_secrets_preview(config, self.state.secret_store)
         redacted = _redact_config_for_client(config)
         self._send_json(
             HTTPStatus.OK,
             {
                 "config": redacted,
                 "secrets_present": secrets_present,
+                "secrets_preview": secrets_preview,
                 "keyring_available": self.state.secret_store.keyring_available,
+                "folder_picker_available": bool(self.state.folder_picker_available()),
                 "version": __version__,
             },
         )
@@ -524,7 +722,13 @@ class SetupHandler(BaseHTTPRequestHandler):
         state = self.state
         with state.save_lock:
             existing = _load_raw_config(state.config_path)
-            merged, secrets_present, secrets_backend, write_errors = _merge_save_payload(
+            (
+                merged,
+                secrets_present,
+                secrets_preview,
+                secrets_backend,
+                write_errors,
+            ) = _merge_save_payload(
                 existing, incoming, secrets_in, state.secret_store,
             )
             try:
@@ -541,6 +745,7 @@ class SetupHandler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "secrets_present": secrets_present,
+                "secrets_preview": secrets_preview,
                 "secrets_backend": secrets_backend,
                 "keyring_used": keyring_used,
                 "write_errors": write_errors,
@@ -576,10 +781,40 @@ class SetupHandler(BaseHTTPRequestHandler):
                 if not isinstance(fields, dict):
                     continue
                 merged = dict(config["collectors"].get(name, {}) or {})
-                merged.update(fields)
+                # A blank secret field in the UI means "keep whatever's
+                # saved" — the password input is always empty on re-render
+                # because we never echo the token back. Without this filter,
+                # ``merged.update(fields)`` would wipe a token the user
+                # already saved to yaml, and the keychain fallback below
+                # can't recover a legacy plaintext-in-yaml token (it only
+                # looks in the OS keyring), so Test Jira / Test GitLab would
+                # fail with "API token required" on the very next click.
+                secret_key = _SECRET_CONFIG_KEYS.get(name)
+                cleaned = {
+                    k: v
+                    for k, v in fields.items()
+                    if not (
+                        k == secret_key
+                        and (not isinstance(v, str) or not v.strip())
+                    )
+                }
+                merged.update(cleaned)
                 config["collectors"][name] = merged
-        if payload.get("repos_dir"):
-            config["repos_dir"] = payload["repos_dir"]
+        # In-flight override: the UI may not have saved yet, so take whatever
+        # shape it sent (string for the legacy case, list for the multi-path
+        # UI). Empty / missing values leave the on-disk config untouched so a
+        # user who types nothing into the Vault section doesn't accidentally
+        # blank their previously-saved roots for this one-off test.
+        if "repos_dir" in payload:
+            raw_override = payload["repos_dir"]
+            if isinstance(raw_override, list) and raw_override:
+                config["repos_dir"] = [
+                    entry.strip()
+                    for entry in raw_override
+                    if isinstance(entry, str) and entry.strip()
+                ]
+            elif isinstance(raw_override, str) and raw_override.strip():
+                config["repos_dir"] = raw_override
 
         # Inline the in-flight secret (never persisted) if the UI sent one.
         inline_secrets = payload.get("secrets") or {}
@@ -608,7 +843,7 @@ class SetupHandler(BaseHTTPRequestHandler):
 
         kwargs: dict[str, Any] = {}
         if collector == "local_git":
-            kwargs["repos_dir"] = config.get("repos_dir")
+            kwargs["repos_dirs"] = get_repos_dirs(config)
 
         try:
             result = probe(section, **kwargs)
@@ -823,6 +1058,57 @@ class SetupHandler(BaseHTTPRequestHandler):
                 "duration_ms": duration_ms,
             },
         )
+
+    def _api_browse_folder(self) -> None:
+        """Open a native OS folder picker and return the selected path.
+
+        The UI calls this when the user clicks a "Browse…" button next to
+        the vault path or a repo path input, so they can pick a folder
+        graphically instead of hand-typing an absolute path. Because the
+        server and browser are both on the same loopback host, it's safe
+        (and far nicer) to spawn an OS-native dialog on the server side —
+        we don't need the unreliable ``webkitdirectory`` HTML shim.
+
+        Contract:
+
+        * ``{"ok": true, "path": "/abs/path"}``  — user picked a folder.
+        * ``{"ok": true, "cancelled": true}``    — user dismissed the dialog.
+        * ``{"ok": false, "error": "<message>"}`` — picker can't run on
+          this host (unsupported OS, missing binary, timeout, etc.).
+
+        The endpoint is CSRF/same-origin gated like every other mutating
+        endpoint, even though it doesn't mutate anything on disk — the
+        picker spawns a subprocess, which we don't want cross-origin code
+        to be able to trigger even locally.
+        """
+        try:
+            payload = self._read_json_dict()
+        except _BadRequest as exc:
+            return self._send_error_json(exc.status, exc.message)
+
+        title = payload.get("title")
+        if not isinstance(title, str) or not title.strip():
+            title = "Select a folder"
+        # Guard against AppleScript quote-escape games — the title is
+        # interpolated into a ``choose folder with prompt "…"`` literal, so
+        # we strip anything that could break out. Users never type arbitrary
+        # titles here anyway; the UI picks from a short hard-coded list.
+        title = title.replace('"', "'").replace("\n", " ")[:120]
+
+        try:
+            path, error = self.state.folder_picker(title)
+        except Exception:
+            log.exception("Folder picker crashed")
+            return self._send_json(
+                HTTPStatus.OK,
+                {"ok": False, "error": "Folder picker crashed — see server log."},
+            )
+
+        if error is not None:
+            return self._send_json(HTTPStatus.OK, {"ok": False, "error": error})
+        if path is None:
+            return self._send_json(HTTPStatus.OK, {"ok": True, "cancelled": True})
+        return self._send_json(HTTPStatus.OK, {"ok": True, "path": path})
 
     def _api_shutdown(self) -> None:
         self.send_response(HTTPStatus.NO_CONTENT)
