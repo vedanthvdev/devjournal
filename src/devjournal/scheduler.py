@@ -15,6 +15,17 @@ _LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 _PLIST_PREFIX = "com.devjournal"
 
 
+def _parse_time(time_str: str) -> tuple[int, int]:
+    """Parse an ``HH:MM`` string into (hour, minute), raising on invalid input."""
+    parts = time_str.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid time format: '{time_str}'. Expected HH:MM.")
+    hour, minute = int(parts[0]), int(parts[1])
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(f"Time out of range: '{time_str}'. Hour must be 0-23, minute 0-59.")
+    return hour, minute
+
+
 def install_schedule(config: dict[str, Any]) -> None:
     """Detect the OS and install the appropriate schedule."""
     system = platform.system()
@@ -100,7 +111,7 @@ def _install_launchd(config: dict[str, Any]) -> None:
     days = range(1, 6) if weekdays_only else range(0, 7)
 
     for mode, time_str in [("morning", morning_time), ("evening", evening_time)]:
-        hour, minute = (int(x) for x in time_str.split(":"))
+        hour, minute = _parse_time(time_str)
         label = f"{_PLIST_PREFIX}.{mode}"
         weekday_dicts = "".join(
             _WEEKDAY_DICT.format(day=d, hour=hour, minute=minute) for d in days
@@ -157,7 +168,7 @@ def _install_cron(config: dict[str, Any]) -> None:
 
     lines: list[str] = []
     for mode, time_str in [("morning", morning_time), ("evening", evening_time)]:
-        hour, minute = (int(x) for x in time_str.split(":"))
+        hour, minute = _parse_time(time_str)
         lines.append(
             f"{minute} {hour} * * {dow} {python_path} -m devjournal {mode} {_CRON_MARKER}"
         )

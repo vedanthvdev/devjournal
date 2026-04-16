@@ -10,17 +10,11 @@ from devjournal.collectors.confluence import ConfluenceCollector
 
 
 def _config(**overrides):
+    """Build a flat config that mirrors what scoped_config would produce."""
     base = {
         "domain": "test.atlassian.net",
         "email": "user@test.com",
         "api_token": "token-123",
-        "collectors": {
-            "jira": {
-                "domain": "test.atlassian.net",
-                "email": "user@test.com",
-                "api_token": "token-123",
-            },
-        },
     }
     base.update(overrides)
     return base

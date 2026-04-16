@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from devjournal.scheduler import _PLIST_TEMPLATE, _WEEKDAY_DICT
+from devjournal.scheduler import _PLIST_TEMPLATE, _WEEKDAY_DICT, _parse_time
 
 
 def _build_plist(mode: str, hour: int, minute: int, weekdays_only: bool = True):
@@ -86,3 +86,23 @@ def test_install_launchd(tmp_path, sample_config, monkeypatch):
     content = morning_plist.read_text()
     assert "<integer>8</integer>" in content
     assert "<integer>30</integer>" in content
+
+
+def test_parse_time_valid():
+    assert _parse_time("08:30") == (8, 30)
+    assert _parse_time("0:00") == (0, 0)
+    assert _parse_time("23:59") == (23, 59)
+
+
+def test_parse_time_invalid_format():
+    with pytest.raises(ValueError, match="Invalid time format"):
+        _parse_time("nope")
+    with pytest.raises(ValueError, match="Invalid time format"):
+        _parse_time("8:30:00")
+
+
+def test_parse_time_out_of_range():
+    with pytest.raises(ValueError, match="out of range"):
+        _parse_time("25:00")
+    with pytest.raises(ValueError, match="out of range"):
+        _parse_time("08:60")

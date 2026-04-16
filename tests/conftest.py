@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from devjournal.config import get_collector_config
+
+_SAFE_GLOBAL_KEYS = ("vault_path", "repos_dir")
+
 
 @pytest.fixture()
 def sample_config(tmp_path):
@@ -47,3 +51,10 @@ def sample_config(tmp_path):
             "weekdays_only": True,
         },
     }
+
+
+def scoped_config(full_config: dict, collector_key: str) -> dict:
+    """Mirror the engine's _scoped_config: global safe keys + collector-specific settings."""
+    base = {k: full_config[k] for k in _SAFE_GLOBAL_KEYS if k in full_config}
+    base.update(get_collector_config(full_config, collector_key))
+    return base

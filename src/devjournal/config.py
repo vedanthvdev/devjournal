@@ -65,7 +65,7 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     if os.name != "nt":
         _check_config_permissions(config_path)
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config: dict[str, Any] = yaml.safe_load(f) or {}
 
     missing = [k for k in REQUIRED_KEYS if not config.get(k)]
