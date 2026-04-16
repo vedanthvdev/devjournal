@@ -35,7 +35,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "responses>=0.23",
-    "ruff>=0.4",
+    "ruff>=0.15.11",
     "keyring>=24",
 ]
 
