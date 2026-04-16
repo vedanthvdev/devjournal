@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -25,6 +27,9 @@ jobs:
   release:
     needs: test
     runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,34 +39,79 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Get version from pyproject.toml
-        id: version
+      - name: Check if already tagged
+        id: tag_check
         run: |
-          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Check if tag already exists
-        id: check_tag
-        run: |
-          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+          if git describe --exact-match --match 'v[0-9]*' HEAD 2>/dev/null; then
+            echo "already_tagged=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "already_tagged=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build package
-        if: steps.check_tag.outputs.exists == 'false'
+      - name: Compute next version
+        if: steps.tag_check.outputs.already_tagged == 'false'
+        id: next
         run: |
-          pip install build
+          LATEST=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            NEXT="v0.1.0"
+          else
+            # Strip "v" prefix and bump patch
+            VERSION="${LATEST#v}"
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f2)
+            PATCH=$(echo "$VERSION" | cut -d. -f3)
+            if ! [[ "$MAJOR" =~ ^[0-9]+$ && "$MINOR" =~ ^[0-9]+$ && "$PATCH" =~ ^[0-9]+$ ]]; then
+              echo "::error::Latest tag '$LATEST' does not match expected vMAJOR.MINOR.PATCH format"
+              exit 1
+            fi
+            PATCH=$((PATCH + 1))
+            NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "version=${NEXT#v}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT"
+
+      - name: Create and push tag
+        if: steps.tag_check.outputs.already_tagged == 'false'
+        run: |
+          git tag -a "${{ steps.next.outputs.tag }}" -m "Release ${{ steps.next.outputs.tag }}"
+          git push origin "${{ steps.next.outputs.tag }}"
+
+      - name: Get released version
+        id: released
+        run: |
+          TAG=$(git describe --tags --match 'v[0-9]*' --abbrev=0)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build package
+        run: |
+          pip install build hatch-vcs
           python -m build
 
+      - name: Verify version
+        run: |
+          pip install dist/*.whl
+          INSTALLED=$(python -c "from devjournal import __version__; print(__version__)")
+          EXPECTED="${{ steps.released.outputs.version }}"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "::error::Version mismatch — installed '$INSTALLED' != expected '$EXPECTED'"
+            exit 1
+          fi
+
       - name: Create GitHub Release
-        if: steps.check_tag.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            dist/* \
-            --title "devjournal ${{ steps.version.outputs.tag }}" \
-            --generate-notes
+          TAG="${{ steps.released.outputs.tag }}"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              dist/* \
+              --title "devjournal $TAG" \
+              --generate-notes \
+              --target ${{ github.ref_name }}
+          else
+            echo "GitHub Release $TAG already exists — skipping"
+          fi
