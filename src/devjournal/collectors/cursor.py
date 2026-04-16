@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Cursor collector — parses AI coding agent sessions from Cursor IDE.
 
 Two data sources:
@@ -40,7 +42,17 @@ def _cursor_state_db_path() -> Path:
     return Path.home() / ".config" / "Cursor" / "User" / "globalStorage" / "state.vscdb"
 
 _TOKEN_PATTERN = re.compile(
-    r"(glpat-\S+|ATATT\S+|ghp_\S+|gho_\S+|sk-\S+|Bearer\s+\S+|xoxb-\S+|xoxp-\S+)",
+    r"("
+    r"glpat-\S+"
+    r"|ATATT\S+"
+    r"|ghp_\S+|gho_\S+|ghu_\S+|ghs_\S+|ghr_\S+"
+    r"|github_pat_\S+"
+    r"|sk-\S+"
+    r"|Bearer\s+\S+"
+    r"|xoxb-\S+|xoxp-\S+|xoxa-\S+|xoxr-\S+"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|eyJ[A-Za-z0-9_-]+?\.[A-Za-z0-9_-]+?\.[A-Za-z0-9_-]+"
+    r")",
     re.IGNORECASE,
 )
 _TASK_KEYWORDS = re.compile(

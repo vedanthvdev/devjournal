@@ -96,7 +96,7 @@ Run `pytest` to verify.
 ## Development Setup
 
 ```bash
-git clone https://github.com/vedanthvasudev/devjournal.git
+git clone https://github.com/vedanthvdev/devjournal.git
 cd devjournal
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Command-line interface for devjournal.
 
 Usage:

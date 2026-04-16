@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Base collector interface and result type.
 
 Every integration (Jira, GitLab, GitHub, etc.) implements the ``Collector``

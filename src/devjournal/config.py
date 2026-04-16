@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Configuration loading and validation.
 
 Reads a YAML file (default ``~/.config/devjournal/config.yaml``) and exposes

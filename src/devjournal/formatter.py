@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Markdown formatter — turns CollectorResult data into Obsidian-compatible sections.
 
 Each collector stores items in its own dict shape. The formatter dispatches to

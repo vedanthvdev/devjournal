@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Jira collector — active tickets and daily activity via the Atlassian REST API."""
 
 from __future__ import annotations

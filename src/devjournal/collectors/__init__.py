@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Collector registry — auto-discovers all Collector subclasses in this package."""
 
 from devjournal.collector import Collector
