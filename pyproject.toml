@@ -34,7 +34,7 @@ setup = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "responses>=0.23",
+    "responses>=0.26.0",
     "ruff>=0.4",
     "keyring>=24",
 ]
