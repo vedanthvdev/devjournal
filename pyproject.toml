@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devjournal"
-version = "0.4.0"
+version = "0.4.1"
 description = "Automated daily work journals for engineers. Pulls from Jira, GitLab, GitHub, Confluence, Cursor, and local git into your Obsidian vault."
 readme = "README.md"
 license = "MIT"

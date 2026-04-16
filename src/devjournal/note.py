@@ -83,7 +83,7 @@ def get_carry_forward(vault_path: str, target_date: date) -> list[str]:
                     break
                 stripped = line.strip()
                 if stripped.startswith("- [ ]") and stripped[5:].strip():
-                    items.append(stripped)
+                    items.append(line.rstrip())
         if items:
             return items
     return []

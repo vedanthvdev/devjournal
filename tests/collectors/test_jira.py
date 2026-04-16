@@ -7,6 +7,7 @@ from datetime import date
 import responses
 
 from devjournal.collectors.jira import JiraCollector
+from tests.conftest import scoped_config
 
 
 @responses.activate
@@ -27,7 +28,7 @@ def test_collect_returns_activity(sample_config):
         },
     )
     collector = JiraCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["jira"]}
+    cfg = scoped_config(sample_config, "jira")
     result = collector.collect(date(2026, 4, 15), cfg)
     assert result.section_id == "jira_activity"
     assert len(result.items) == 1
@@ -54,7 +55,7 @@ def test_collect_agenda_returns_active_tickets(sample_config):
         },
     )
     collector = JiraCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["jira"]}
+    cfg = scoped_config(sample_config, "jira")
     result = collector.collect_agenda(date(2026, 4, 15), cfg)
     assert result.section_id == "jira_active"
     assert len(result.items) == 1
@@ -67,7 +68,7 @@ def test_collect_handles_api_failure(sample_config):
         status=500,
     )
     collector = JiraCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["jira"]}
+    cfg = scoped_config(sample_config, "jira")
     result = collector.collect(date(2026, 4, 15), cfg)
     assert result.items == []
 

@@ -7,6 +7,7 @@ from datetime import date
 import responses
 
 from devjournal.collectors.gitlab import GitLabCollector
+from tests.conftest import scoped_config
 
 
 @responses.activate
@@ -32,7 +33,7 @@ def test_collect_push_events(sample_config):
     )
 
     collector = GitLabCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["gitlab"]}
+    cfg = scoped_config(sample_config, "gitlab")
     result = collector.collect(date(2026, 4, 15), cfg)
     assert result.section_id == "code_changes"
     assert len(result.items) == 1
@@ -54,7 +55,7 @@ def test_collect_filters_out_other_dates(sample_config):
         ],
     )
     collector = GitLabCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["gitlab"]}
+    cfg = scoped_config(sample_config, "gitlab")
     result = collector.collect(date(2026, 4, 15), cfg)
     assert result.items == []
 
@@ -73,7 +74,7 @@ def test_collect_skips_zero_commit_pushes(sample_config):
         ],
     )
     collector = GitLabCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["gitlab"]}
+    cfg = scoped_config(sample_config, "gitlab")
     result = collector.collect(date(2026, 4, 15), cfg)
     assert result.items == []
 

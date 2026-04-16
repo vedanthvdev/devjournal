@@ -7,6 +7,7 @@ from datetime import date
 import responses
 
 from devjournal.collectors.github import GitHubCollector
+from tests.conftest import scoped_config
 
 
 @responses.activate
@@ -39,7 +40,7 @@ def test_collect_push_and_pr_events(sample_config):
     )
 
     collector = GitHubCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["github"]}
+    cfg = scoped_config(sample_config, "github")
     result = collector.collect(date(2026, 4, 15), cfg)
     assert result.section_id == "code_changes"
     assert len(result.items) == 3
@@ -67,7 +68,7 @@ def test_collect_filters_by_date(sample_config):
         ],
     )
     collector = GitHubCollector()
-    cfg = {**sample_config, **sample_config["collectors"]["github"]}
+    cfg = scoped_config(sample_config, "github")
     result = collector.collect(date(2026, 4, 15), cfg)
     assert result.items == []
 
