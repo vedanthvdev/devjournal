@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "devjournal"
-version = "0.4.1"
+dynamic = ["version"]
 description = "Automated daily work journals for engineers. Pulls from Jira, GitLab, GitHub, Confluence, Cursor, and local git into your Obsidian vault."
 readme = "README.md"
 license = "MIT"
@@ -43,6 +43,17 @@ devjournal = "devjournal.cli:main"
 Homepage = "https://github.com/vedanthvasudev/devjournal"
 Repository = "https://github.com/vedanthvasudev/devjournal"
 Issues = "https://github.com/vedanthvasudev/devjournal/issues"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.hatch.version.raw-options]
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/devjournal/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/devjournal"]
