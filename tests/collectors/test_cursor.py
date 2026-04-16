@@ -44,6 +44,107 @@ def test_clean_query_rejects_short():
     assert _clean_query("hi") is None
 
 
+# ---------------------------------------------------------------------------
+# Token-redaction regression tests — one per secret prefix in SECURITY.md
+# ---------------------------------------------------------------------------
+
+
+def _redact(text: str) -> str:
+    from devjournal.collectors.cursor import _TOKEN_PATTERN
+
+    return _TOKEN_PATTERN.sub("", text)
+
+
+def test_redacts_gitlab_pat():
+    assert "glpat" not in _redact("token is glpat-AbCdEf123456789XYZ please use")
+
+
+def test_redacts_atlassian_token():
+    assert "ATATT" not in _redact("auth ATATT3xFfGF0T1AbCdEfGhIjKlMnOpQrStUv done")
+
+
+def test_redacts_github_classic_pat():
+    assert "ghp_" not in _redact("export TOKEN=ghp_1234567890abcdefghij")
+
+
+def test_redacts_github_oauth_token():
+    assert "gho_" not in _redact("oauth gho_1234567890abcdefghij end")
+
+
+def test_redacts_github_user_token():
+    assert "ghu_" not in _redact("user ghu_1234567890abcdefghij")
+
+
+def test_redacts_github_server_token():
+    assert "ghs_" not in _redact("server ghs_1234567890abcdefghij")
+
+
+def test_redacts_github_refresh_token():
+    assert "ghr_" not in _redact("refresh ghr_1234567890abcdefghij")
+
+
+def test_redacts_github_fine_grained_pat():
+    text = "use github_pat_11AAAAA_BBBBBBBBBBBBBBBBBBBBBB for CI"
+    assert "github_pat_" not in _redact(text)
+
+
+def test_redacts_openai_key():
+    assert "sk-proj" not in _redact("OPENAI_API_KEY=sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ1234")
+
+
+def test_does_not_redact_scikit_learn():
+    """`sk-learn` should not be treated as an OpenAI key."""
+    result = _redact("install sk-learn and sk-image for ML work today")
+    assert "sk-learn" in result
+    assert "sk-image" in result
+
+
+def test_redacts_bearer_token():
+    text = "Authorization: Bearer abc123XYZ_456-789+toolongtopass=="
+    assert "Bearer abc123XYZ_456" not in _redact(text)
+
+
+def test_does_not_redact_bearer_in_prose():
+    """`Bearer token authentication` shouldn't eat the next word."""
+    result = _redact("Bearer token authentication works well")
+    assert "token" in result
+    assert "authentication" in result
+
+
+def test_redacts_slack_bot_token():
+    assert "xoxb-" not in _redact("slack xoxb-1234567890-abcdef done")
+
+
+def test_redacts_slack_user_token():
+    assert "xoxp-" not in _redact("xoxp-1234-5678-abcdef here")
+
+
+def test_redacts_aws_access_key():
+    assert "AKIA" not in _redact("export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE")
+
+
+def test_does_not_redact_lowercase_akia_prose():
+    """Real AWS keys are uppercase only — lowercase akia… must not match."""
+    result = _redact("the word akiaPQRSTUVWXYZ1234567 is not a key")
+    assert "akia" in result.lower()
+
+
+def test_redacts_jwt():
+    jwt = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+        "eyJzdWIiOiIxMjM0NSIsIm5hbWUiOiJBbGljZSJ9."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    )
+    redacted = _redact(f"token {jwt} end")
+    assert "eyJ" not in redacted
+
+
+def test_does_not_redact_lowercase_eyj():
+    """JWT headers always start with literal `eyJ`."""
+    result = _redact("the variable eyj_value is not a JWT placeholder text here")
+    assert "eyj" in result.lower()
+
+
 def test_pick_summary_prefers_action():
     queries = ["hello there", "implement the new auth flow", "thanks"]
     assert "implement" in _pick_summary(queries).lower()

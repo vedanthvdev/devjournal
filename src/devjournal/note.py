@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Vedanth Vasudev
+# SPDX-License-Identifier: MIT
 """Daily note file operations.
 
 Handles creating notes from templates and performing idempotent section

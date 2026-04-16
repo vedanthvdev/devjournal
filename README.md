@@ -181,7 +181,7 @@ The short version: create a new file in `src/devjournal/collectors/`, subclass `
 ## Development
 
 ```bash
-git clone https://github.com/vedanthvasudev/devjournal.git
+git clone https://github.com/vedanthvdev/devjournal.git
 cd devjournal
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
