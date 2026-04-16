@@ -32,7 +32,7 @@ setup = [
     "keyring>=24",
 ]
 dev = [
-    "pytest>=7.0",
+    "pytest>=9.0.3",
     "pytest-cov>=4.0",
     "responses>=0.23",
     "ruff>=0.4",
