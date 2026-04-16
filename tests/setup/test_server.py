@@ -116,6 +116,13 @@ def test_get_config_returns_defaults_when_no_file(running_server):
     assert status == 200
     assert "config" in payload
     assert "secrets_present" in payload
+    # Preview map is always present, even if every value is ``None`` — keeps
+    # the UI contract simple: the client never has to branch on "field absent
+    # vs field null".
+    assert "secrets_preview" in payload
+    for name in ("jira", "gitlab", "github", "confluence"):
+        assert name in payload["secrets_preview"]
+        assert payload["secrets_preview"][name] is None
     assert payload["version"]
 
 
@@ -790,3 +797,504 @@ def test_run_surfaces_missing_config_file_distinctly(running_server, tmp_path):
         "Message still blames vault_path when the file itself is missing: "
         + payload["error"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Masked secret previews
+# ---------------------------------------------------------------------------
+
+
+def _preview_tail(token: str) -> str:
+    """Expected UI preview for a token: 8 bullets + last 4."""
+    return ("\u2022" * 8) + token[-4:]
+
+
+def test_save_returns_secrets_preview_with_last_four(running_server):
+    """Saving a token yields a preview with 8 bullets + last 4.
+
+    This is the whole point of the feature — on reload the user can confirm
+    "yes I saved it" without the server ever echoing the plaintext back.
+    """
+    host, port, token, *_ = running_server
+    status, payload, _ = _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {"vault_path": "/tmp/v", "collectors": {}},
+            "secrets": {"gitlab": "glpat-abcdefgh1234WXYZ"},
+        },
+        headers=_auth(token, port),
+    )
+    assert status == 200
+    assert "secrets_preview" in payload
+    assert payload["secrets_preview"]["gitlab"] == _preview_tail("glpat-abcdefgh1234WXYZ")
+
+
+def test_get_config_preview_reflects_saved_tokens(running_server):
+    """After save, a fresh GET returns the same preview — so a user who
+    reopens the UI in a new tab sees a populated placeholder, not a blank
+    box that makes them think their token was lost."""
+    host, port, token, *_ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {"vault_path": "/tmp/v", "collectors": {}},
+            "secrets": {"github": "ghp_abcdefghijklmnopWXYZ"},
+        },
+        headers=_auth(token, port),
+    )
+
+    status, payload, _ = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    assert payload["secrets_preview"]["github"] == _preview_tail("ghp_abcdefghijklmnopWXYZ")
+    assert payload["secrets_present"]["github"] is True
+
+
+def test_preview_hides_token_length(running_server):
+    """Two tokens of very different lengths must produce identically-shaped
+    previews (same number of bullets). Leaking token length narrows the
+    provider guess for an attacker who can see the HTTP response."""
+    host, port, token, *_ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {"vault_path": "/tmp/v", "collectors": {}},
+            "secrets": {
+                "jira": "short12abcd",  # 11 chars
+                "github": "ghp_" + "x" * 60 + "WXYZ",  # ~68 chars
+            },
+        },
+        headers=_auth(token, port),
+    )
+    status, payload, _ = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    jira_preview = payload["secrets_preview"]["jira"]
+    github_preview = payload["secrets_preview"]["github"]
+    assert jira_preview is not None and github_preview is not None
+    # Both previews are exactly the same length — 8 bullets + 4 tail chars.
+    assert len(jira_preview) == len(github_preview) == 12
+    # And both end in their respective last 4, so the user can still verify.
+    assert jira_preview.endswith("abcd")
+    assert github_preview.endswith("WXYZ")
+
+
+def test_preview_uses_bullets_only_for_short_tokens(running_server):
+    """Tokens shorter than the tail length should not have their tail
+    echoed back — doing so would reveal a disproportionate fraction of a
+    (probably malformed) secret. The bullet-only fallback is the safer
+    default."""
+    host, port, token, *_ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {"vault_path": "/tmp/v", "collectors": {}},
+            "secrets": {"jira": "ab1"},  # 3 chars — below the 8-char threshold
+        },
+        headers=_auth(token, port),
+    )
+    status, payload, _ = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    preview = payload["secrets_preview"]["jira"]
+    assert preview is not None
+    assert preview == "\u2022" * 8
+    assert "ab1" not in preview
+    # Nothing after the bullets — prove no characters of the secret made it
+    # into the payload.
+    assert all(ch == "\u2022" for ch in preview)
+
+
+def test_preview_null_when_absent(running_server):
+    """No token → preview is ``None``, in contrast to the populated-preview
+    case. The client uses this null to restore the original markup
+    placeholder (e.g. ``"paste token"``)."""
+    host, port, token, *_ = running_server
+    status, payload, _ = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    for name in ("jira", "gitlab", "github", "confluence"):
+        assert payload["secrets_preview"][name] is None
+
+
+def test_confluence_preview_falls_back_to_jira(running_server):
+    """When Confluence has no token of its own, its preview mirrors Jira's —
+    matching the existing ``secrets_present`` fallback behaviour. The UI
+    banners "Confluence configured" off Jira's credentials, and the
+    preview string must tell the same story."""
+    host, port, token, *_ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {"vault_path": "/tmp/v", "collectors": {"confluence": {"enabled": True}}},
+            "secrets": {"jira": "jira-shared-abcdefWXYZ"},
+        },
+        headers=_auth(token, port),
+    )
+    status, payload, _ = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    assert payload["secrets_preview"]["jira"] == _preview_tail("jira-shared-abcdefWXYZ")
+    assert payload["secrets_preview"]["confluence"] == payload["secrets_preview"]["jira"]
+
+
+def test_preview_never_echoes_plaintext(running_server):
+    """Structural assertion: no preview value anywhere in the response body
+    may contain the literal plaintext token. Guards against an accidental
+    refactor that pipes the unmasked value into the response."""
+    host, port, token, *_ = running_server
+    plaintext = "supersecret-plaintext-abcdWXYZ"
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {"vault_path": "/tmp/v", "collectors": {}},
+            "secrets": {"gitlab": plaintext},
+        },
+        headers=_auth(token, port),
+    )
+    status, _, raw_body = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    assert plaintext.encode() not in raw_body, (
+        "Plaintext token appeared in the GET /api/config response body"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Multi-path repos_dir
+# ---------------------------------------------------------------------------
+
+
+def test_save_accepts_repos_dir_as_list(running_server):
+    """The UI sends ``repos_dir`` as a list of strings. The server writes the
+    list back to disk and returns it on GET — round-trip must preserve
+    ordering because ``local_git`` scans in list order."""
+    host, port, token, config_path, _ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {
+                "vault_path": "/tmp/v",
+                "repos_dir": ["/home/me/Code", "/home/me/work"],
+                "collectors": {},
+            },
+            "secrets": {},
+        },
+        headers=_auth(token, port),
+    )
+    saved = yaml.safe_load(Path(config_path).read_text())
+    assert saved["repos_dir"] == ["/home/me/Code", "/home/me/work"]
+
+    status, payload, _ = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    assert payload["config"]["repos_dir"] == ["/home/me/Code", "/home/me/work"]
+
+
+def test_save_accepts_legacy_string_repos_dir(running_server):
+    """Hand-edited ``config.yaml`` with the legacy string shape still loads
+    and saves cleanly — we don't force-migrate users."""
+    host, port, token, config_path, _ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {
+                "vault_path": "/tmp/v",
+                "repos_dir": "/home/me/Code",
+                "collectors": {},
+            },
+            "secrets": {},
+        },
+        headers=_auth(token, port),
+    )
+    saved = yaml.safe_load(Path(config_path).read_text())
+    assert saved["repos_dir"] == "/home/me/Code"  # shape preserved
+
+
+def test_save_drops_blank_entries_from_list(running_server):
+    """A user who adds a row, types nothing, and clicks Save should not see
+    a blank string persist in ``config.yaml`` — the empty row in the UI
+    is noise, not data."""
+    host, port, token, config_path, _ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {
+                "vault_path": "/tmp/v",
+                "repos_dir": ["/home/me/Code", "", "   ", "/home/me/work"],
+                "collectors": {},
+            },
+            "secrets": {},
+        },
+        headers=_auth(token, port),
+    )
+    saved = yaml.safe_load(Path(config_path).read_text())
+    assert saved["repos_dir"] == ["/home/me/Code", "/home/me/work"]
+
+
+def test_save_empty_list_persists_as_empty_list(running_server):
+    """Cleaning all rows means "don't scan any local repos" — saved as ``[]``
+    on disk so ``local_git`` sees the intent explicitly."""
+    host, port, token, config_path, _ = running_server
+    _request(
+        host, port, "POST", "/api/config",
+        body={
+            "config": {"vault_path": "/tmp/v", "repos_dir": [], "collectors": {}},
+            "secrets": {},
+        },
+        headers=_auth(token, port),
+    )
+    saved = yaml.safe_load(Path(config_path).read_text())
+    assert saved["repos_dir"] == []
+
+
+# ---------------------------------------------------------------------------
+# Regression: Test Jira / Test GitLab must not fail when the form's password
+# field is empty but a token is already saved. The UI never echoes the saved
+# token back into the password input, so every Test click was re-sending
+# ``api_token: ""`` — which previously clobbered the saved value during merge
+# and broke the test with "API token required".
+# ---------------------------------------------------------------------------
+
+
+@responses.activate
+def test_test_endpoint_preserves_yaml_token_when_ui_sends_blank(running_server):
+    """Legacy config path: user has a plaintext token in YAML (pre-keychain
+    migration). The UI's Test button must use that token rather than the
+    blank string from the form."""
+    host, port, token, config_path, _ = running_server
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "vault_path": "/tmp/v",
+                "collectors": {
+                    "jira": {
+                        "enabled": True,
+                        "domain": "yourco.atlassian.net",
+                        "email": "u@e.com",
+                        "api_token": "legacy-yaml-token",
+                    },
+                },
+            }
+        )
+    )
+
+    # Succeed only if the probe calls the API with the legacy-yaml-token.
+    # ``responses`` is strict about unmocked URLs, so reaching the
+    # endpoint *at all* already implies the token resolved; the body
+    # assertion on request headers pins it down further.
+    responses.get(
+        "https://yourco.atlassian.net/rest/api/3/myself",
+        json={"emailAddress": "u@e.com"},
+        status=200,
+    )
+
+    status, payload, _ = _request(
+        host, port, "POST", "/api/test/jira",
+        body={
+            "collectors": {
+                "jira": {
+                    "enabled": True,
+                    "domain": "yourco.atlassian.net",
+                    "email": "u@e.com",
+                    "api_token": "",
+                },
+            },
+            "secrets": {},
+        },
+        headers=_auth(token, port),
+    )
+    assert status == 200
+    assert payload["ok"] is True, f"Blank token override must not wipe YAML value: {payload}"
+
+
+@responses.activate
+def test_test_endpoint_preserves_keychain_token_when_ui_sends_blank(running_server):
+    """New-style path: token lives in the keyring only. The Test button's
+    blank ``api_token`` in the form payload must fall back to the keyring."""
+    from devjournal.setup.secrets import SERVICE_NAME
+
+    host, port, token, config_path, fake = running_server
+    fake.set_password(SERVICE_NAME, "jira", "keychain-token")
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "vault_path": "/tmp/v",
+                "collectors": {
+                    "jira": {
+                        "enabled": True,
+                        "domain": "yourco.atlassian.net",
+                        "email": "u@e.com",
+                    },
+                },
+            }
+        )
+    )
+
+    responses.get(
+        "https://yourco.atlassian.net/rest/api/3/myself",
+        json={"emailAddress": "u@e.com"},
+        status=200,
+    )
+
+    status, payload, _ = _request(
+        host, port, "POST", "/api/test/jira",
+        body={
+            "collectors": {
+                "jira": {
+                    "enabled": True,
+                    "domain": "yourco.atlassian.net",
+                    "email": "u@e.com",
+                    "api_token": "",  # nothing typed in the password field
+                },
+            },
+            "secrets": {},
+        },
+        headers=_auth(token, port),
+    )
+    assert status == 200
+    assert payload["ok"] is True, f"Keychain fallback must kick in: {payload}"
+
+
+# ---------------------------------------------------------------------------
+# Folder picker — /api/browse-folder is CSRF-gated, returns a stubbable
+# payload, and degrades cleanly when the platform has no native picker.
+# We never invoke the real native dialog from the test suite.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def server_with_picker(tmp_path):
+    """Variant fixture that exposes ``state`` so tests can replace the
+    folder_picker without shelling out to osascript/zenity."""
+    config_path = tmp_path / "config.yaml"
+    fake = FakeKeyring()
+    store = SecretStore(backend=fake)
+
+    server, state = build_server(config_path=config_path, port=0, secret_store=store)
+    port = server.server_address[1]
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True,
+    )
+    thread.start()
+    try:
+        yield "127.0.0.1", port, state.csrf_token, state, config_path
+    finally:
+        server.shutdown()
+        server.server_close()
+        state.shutdown_requested.set()
+        thread.join(timeout=5)
+
+
+def test_browse_folder_returns_picked_path(server_with_picker):
+    host, port, token, state, _ = server_with_picker
+    state.folder_picker = lambda title: ("/home/me/Obsidian Vault", None)
+
+    status, payload, _ = _request(
+        host, port, "POST", "/api/browse-folder",
+        body={"title": "Pick vault"},
+        headers=_auth(token, port),
+    )
+    assert status == 200
+    assert payload == {"ok": True, "path": "/home/me/Obsidian Vault"}
+
+
+def test_browse_folder_reports_cancel(server_with_picker):
+    host, port, token, state, _ = server_with_picker
+    state.folder_picker = lambda title: (None, None)
+
+    status, payload, _ = _request(
+        host, port, "POST", "/api/browse-folder",
+        body={},
+        headers=_auth(token, port),
+    )
+    assert status == 200
+    assert payload == {"ok": True, "cancelled": True}
+
+
+def test_browse_folder_reports_unavailable_platform(server_with_picker):
+    host, port, token, state, _ = server_with_picker
+    state.folder_picker = lambda title: (None, "Folder picker not supported on Plan9.")
+
+    status, payload, _ = _request(
+        host, port, "POST", "/api/browse-folder",
+        body={},
+        headers=_auth(token, port),
+    )
+    assert status == 200
+    assert payload["ok"] is False
+    assert "Plan9" in payload["error"]
+
+
+def test_browse_folder_requires_csrf(server_with_picker):
+    host, port, _token, state, _ = server_with_picker
+    state.folder_picker = lambda title: ("/should/not/reach", None)
+
+    status, _, _ = _request(
+        host, port, "POST", "/api/browse-folder",
+        body={},
+        headers={"Origin": f"http://127.0.0.1:{port}"},  # no CSRF token
+    )
+    assert status == 403
+
+
+def test_browse_folder_cross_origin_blocked(server_with_picker):
+    host, port, token, state, _ = server_with_picker
+    state.folder_picker = lambda title: ("/should/not/reach", None)
+
+    status, _, _ = _request(
+        host, port, "POST", "/api/browse-folder",
+        body={},
+        headers={"X-DevJournal-Token": token, "Origin": "https://evil.example"},
+    )
+    assert status == 403
+
+
+def test_browse_folder_survives_picker_crash(server_with_picker):
+    """A buggy native picker must not take the server down with it."""
+    host, port, token, state, _ = server_with_picker
+
+    def boom(_title):
+        raise RuntimeError("osascript segfaulted")
+
+    state.folder_picker = boom
+
+    status, payload, _ = _request(
+        host, port, "POST", "/api/browse-folder",
+        body={},
+        headers=_auth(token, port),
+    )
+    assert status == 200
+    assert payload["ok"] is False
+    assert "crashed" in payload["error"].lower()
+    # Leaked exception text would include the raw message — we must not
+    # echo it verbatim, just a generic "see server log" pointer.
+    assert "segfaulted" not in payload["error"]
+
+
+def test_get_config_advertises_folder_picker_availability(server_with_picker):
+    host, port, _token, state, _ = server_with_picker
+    state.folder_picker_available = lambda: True
+
+    status, payload, _ = _request(host, port, "GET", "/api/config")
+    assert status == 200
+    assert payload["folder_picker_available"] is True
+
+    state.folder_picker_available = lambda: False
+    _, payload2, _ = _request(host, port, "GET", "/api/config")
+    assert payload2["folder_picker_available"] is False
+
+
+def test_browse_folder_strips_double_quotes_from_title(server_with_picker):
+    """The title is interpolated into an AppleScript string literal on
+    macOS, so any ``"`` the caller sent must be stripped before reaching
+    the picker or the script would break out of the literal."""
+    host, port, token, state, _ = server_with_picker
+    captured = {}
+
+    def capturing(title):
+        captured["title"] = title
+        return ("/x", None)
+
+    state.folder_picker = capturing
+
+    _request(
+        host, port, "POST", "/api/browse-folder",
+        body={"title": 'evil" title\nwith\nnewlines'},
+        headers=_auth(token, port),
+    )
+    assert '"' not in captured["title"]
+    assert "\n" not in captured["title"]

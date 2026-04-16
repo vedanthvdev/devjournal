@@ -72,7 +72,9 @@ The config file lives at `~/.config/devjournal/config.yaml`. Here's the full ref
 
 ```yaml
 vault_path: ~/Documents/Obsidian Vault    # path to your Obsidian vault
-repos_dir: ~/Code                          # parent dir of your git repos
+repos_dir:                                 # parent dirs of your git repos
+  - ~/Code                                 # (legacy single-string form still works)
+  - ~/work
 
 collectors:
   jira:
@@ -145,7 +147,9 @@ Captures push events, pull requests, reviews, and comments.
 
 ### Local Git
 
-Scans all repositories under `repos_dir` for commits matching your `author_email`. No API token needed.
+Scans all repositories under each `repos_dir` entry for commits matching your `author_email`. No API token needed.
+
+`repos_dir` accepts either a single path (legacy shape) or a list of parent directories — useful when you keep code in several roots (e.g. `~/Code` for personal projects and `~/work` for employer repos). Each root is scanned one level deep. Repos with the same directory name under different roots are disambiguated in the evening note so commits never silently merge.
 
 ### Cursor IDE
 

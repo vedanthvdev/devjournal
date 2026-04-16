@@ -179,7 +179,7 @@ def git_repo(tmp_path):
 
 def test_local_git_finds_commits(git_repo):
     result = probe_local_git(
-        {"author_email": "probe@test.com"}, repos_dir=str(git_repo),
+        {"author_email": "probe@test.com"}, repos_dirs=[str(git_repo)],
     )
     assert result.ok
     assert "myrepo" in result.detail or "commits" in result.detail.lower()
@@ -187,14 +187,35 @@ def test_local_git_finds_commits(git_repo):
 
 def test_local_git_no_matches(git_repo):
     result = probe_local_git(
-        {"author_email": "nobody@test.com"}, repos_dir=str(git_repo),
+        {"author_email": "nobody@test.com"}, repos_dirs=[str(git_repo)],
     )
     assert not result.ok
 
 
 def test_local_git_missing_email():
-    result = probe_local_git({"author_email": ""}, repos_dir="/tmp")
+    result = probe_local_git({"author_email": ""}, repos_dirs=["/tmp"])
     assert not result.ok
+
+
+def test_local_git_empty_list_is_missing():
+    """No configured roots is distinct from unreadable roots — the former is
+    a setup error ("configure at least one path"), the latter is a
+    permissions error. The two messages must not conflate."""
+    result = probe_local_git({"author_email": "me@test.com"}, repos_dirs=[])
+    assert not result.ok
+    assert "not set" in result.detail.lower() or "exist" in result.detail.lower()
+
+
+def test_local_git_skips_missing_dirs_and_tries_next(git_repo, tmp_path):
+    """Given two roots where the first doesn't exist and the second has a
+    matching repo, the probe reports success — it must not bail on the first
+    missing dir."""
+    missing = tmp_path / "does-not-exist"
+    result = probe_local_git(
+        {"author_email": "probe@test.com"},
+        repos_dirs=[str(missing), str(git_repo)],
+    )
+    assert result.ok, result.detail
 
 
 # ---------------------------------------------------------------------------

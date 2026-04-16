@@ -23,20 +23,30 @@
     </div>
   </header>
 
+  <!-- Toast region: lives outside <main> so fixed positioning is predictable.
+       aria-live="polite" + role="status" announce updates to screen readers. -->
+  <div id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+
   <main>
-    <div id="banner" class="banner hidden" role="status"></div>
 
     <section class="card">
       <header class="card-head"><h2>Vault</h2></header>
       <div class="card-body">
         <label class="field">
           <span>Obsidian vault path</span>
-          <input id="vault_path" type="text" placeholder="~/Documents/Obsidian Vault" />
+          <div class="path-row">
+            <input id="vault_path" type="text" placeholder="~/Documents/Obsidian Vault" />
+            <button id="vault_path_browse" class="btn btn-ghost btn-inline" type="button" hidden>Browse…</button>
+          </div>
         </label>
-        <label class="field">
-          <span>Local repos directory</span>
-          <input id="repos_dir" type="text" placeholder="~/Code" />
-        </label>
+        <fieldset class="field field-multi" id="repos-dirs-field">
+          <legend>Local repos directories</legend>
+          <div id="repos-dirs-list" class="repos-list" aria-live="polite"></div>
+          <div class="repos-actions">
+            <button id="repos-dirs-add" class="btn btn-ghost btn-inline" type="button">+ Add path</button>
+            <p class="muted repos-hint">Each directory is scanned one level deep for git repos. Add one row per parent folder.</p>
+          </div>
+        </fieldset>
       </div>
     </section>
 

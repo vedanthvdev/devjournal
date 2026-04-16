@@ -154,78 +154,105 @@ def probe_github(config: dict) -> ProbeResult:
     return ProbeResult(True, f"Authenticated as {login or 'user'}")
 
 
-def probe_local_git(config: dict, *, repos_dir: str | None = None) -> ProbeResult:
+def probe_local_git(
+    config: dict,
+    *,
+    repos_dirs: list[str] | None = None,
+) -> ProbeResult:
+    """Check that ``git`` can find at least one commit by ``author_email``.
+
+    ``repos_dirs`` is a list of root directories — the probe scans each root
+    itself (``git -C <root>``) and, if that fails or yields nothing, walks one
+    level deep looking for ``<root>/<repo>/.git``. The first root that yields a
+    hit wins; only if every root is empty do we report failure.
+
+    The probe is intentionally read-only: it never mutates config or touches
+    the filesystem beyond ``iterdir`` + ``git log`` subprocesses.
+    """
     email = (config.get("author_email") or "").strip()
     if not email:
         return ProbeResult(False, "author_email is required")
     if not shutil.which("git"):
         return ProbeResult(False, "`git` binary not found on PATH")
-    root = Path(repos_dir).expanduser() if repos_dir else None
-    if root is None or not root.exists():
+    roots = [Path(d).expanduser() for d in (repos_dirs or [])]
+    roots = [r for r in roots if r.exists()]
+    if not roots:
         return ProbeResult(False, "repos_dir is not set or does not exist")
-    try:
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(root),
-                "log",
-                f"--author={email}",
-                "-n",
-                "1",
-                "--all",
-                "--pretty=%h",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=_TIMEOUT_SECONDS,
-        )
-    except Exception:
-        # ``-C <root>`` will fail if root isn't itself a repo — fall through
-        # to the per-subdir scan below.
-        proc = None  # type: ignore[assignment]
-
-    if proc is not None and proc.returncode == 0 and proc.stdout.strip():
-        return ProbeResult(True, f"Found commits by {email} in {root}")
-
-    # ``repos_dir`` is typically a parent containing many repos — walk one level.
-    try:
-        children = sorted(root.iterdir())
-    except PermissionError:
-        return ProbeResult(False, f"Cannot read {root} — check permissions")
-    except OSError as exc:
-        return ProbeResult(False, f"Cannot list {root}: {exc}")
 
     found: list[str] = []
-    for child in children:
-        if not (child / ".git").exists():
-            continue
+    permission_errors: list[str] = []
+
+    for root in roots:
+        # Fast path: the root itself might be a single repo.
         try:
             proc = subprocess.run(
                 [
                     "git",
                     "-C",
-                    str(child),
+                    str(root),
                     "log",
                     f"--author={email}",
                     "-n",
                     "1",
+                    "--all",
                     "--pretty=%h",
                 ],
                 capture_output=True,
                 text=True,
                 timeout=_TIMEOUT_SECONDS,
             )
+        except Exception:
+            # ``-C <root>`` will fail if root isn't itself a repo — fall
+            # through to the per-subdir scan.
+            proc = None  # type: ignore[assignment]
+
+        if proc is not None and proc.returncode == 0 and proc.stdout.strip():
+            return ProbeResult(True, f"Found commits by {email} in {root}")
+
+        try:
+            children = sorted(root.iterdir())
+        except PermissionError:
+            permission_errors.append(str(root))
+            continue
+        except OSError:
+            # Unreadable root — not fatal, try the next one.
+            continue
+
+        for child in children:
+            if not (child / ".git").exists():
+                continue
+            try:
+                proc = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(child),
+                        "log",
+                        f"--author={email}",
+                        "-n",
+                        "1",
+                        "--pretty=%h",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                continue
             if proc.returncode == 0 and proc.stdout.strip():
                 found.append(child.name)
                 if len(found) >= 3:
-                    break
-        except Exception:
-            continue
+                    return ProbeResult(True, f"Found commits in: {', '.join(found)}")
 
     if found:
         return ProbeResult(True, f"Found commits in: {', '.join(found)}")
-    return ProbeResult(False, f"No commits by {email} found in {root}")
+    if permission_errors:
+        return ProbeResult(
+            False,
+            f"Cannot read {', '.join(permission_errors)} — check permissions",
+        )
+    roots_display = ", ".join(str(r) for r in roots)
+    return ProbeResult(False, f"No commits by {email} found in {roots_display}")
 
 
 _CURSOR_TRANSCRIPT_ROOTS = [

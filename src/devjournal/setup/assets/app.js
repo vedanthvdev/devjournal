@@ -73,6 +73,16 @@
   const state = {
     config: {},
     secretsPresent: {},
+    // Per-collector masked preview string (e.g. "••••••••wXyZ") or null when
+    // no token is stored. Populated from the server on boot + after every
+    // save. The plaintext never leaves the server — the preview is the only
+    // way the UI can confirm "yes, your token is still saved" on revisit.
+    secretsPreview: {},
+    // Whether the OS has a working native folder picker (osascript on
+    // macOS, zenity/kdialog on Linux). We probe on boot so we can hide the
+    // Browse buttons on hosts where clicking them would just surface an
+    // error, rather than showing disabled-looking buttons everywhere.
+    folderPickerAvailable: false,
     keyringAvailable: false,
     version: "",
     dirtySecrets: {},  // collector -> plaintext (only tokens the user changed)
@@ -89,23 +99,88 @@
     if (node) node.textContent = text;
   };
 
-  const setBanner = (message, kind) => {
-    const node = el("#banner");
-    node.textContent = message;
-    node.className = `banner ${kind}`;
-    if (!message) node.classList.add("hidden");
+  // ----- Toasts -----
+  //
+  // A tiny stackable notification system. We replaced the single
+  // always-on banner with this because (a) a static green "Authenticated"
+  // line reads like an error in peripheral vision and (b) banners fight
+  // the user for the top of the page. Toasts auto-dismiss, can be
+  // dismissed manually, and never shift layout.
+  //
+  // Defaults: success/info toasts stay for 4 s; warn/err stay for 7 s so
+  // there's time to read them. Callers can override with ``duration``.
+  const _TOAST_ICONS = { ok: "✓", err: "✕", warn: "!", info: "i" };
+  const _TOAST_DEFAULTS = { ok: 4000, info: 4000, warn: 7000, err: 7000 };
+
+  const showToast = (message, kind = "info", opts = {}) => {
+    const host = el("#toasts");
+    if (!host) return null;
+    const safeKind = _TOAST_ICONS[kind] ? kind : "info";
+    const toast = document.createElement("div");
+    toast.className = `toast ${safeKind}`;
+    toast.setAttribute("role", safeKind === "err" ? "alert" : "status");
+
+    const icon = document.createElement("span");
+    icon.className = "toast-icon";
+    icon.textContent = _TOAST_ICONS[safeKind];
+    icon.setAttribute("aria-hidden", "true");
+
+    const body = document.createElement("div");
+    body.className = "toast-body";
+    if (opts.title) {
+      const t = document.createElement("div");
+      t.className = "toast-title";
+      t.textContent = opts.title;
+      body.appendChild(t);
+      const d = document.createElement("div");
+      d.className = "toast-detail";
+      d.textContent = message;
+      body.appendChild(d);
+    } else {
+      body.textContent = message;
+    }
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "toast-close";
+    close.setAttribute("aria-label", "Dismiss notification");
+    close.textContent = "×";
+
+    toast.append(icon, body, close);
+    host.appendChild(toast);
+
+    const dismiss = () => {
+      if (toast.dataset.leaving === "1") return;
+      toast.dataset.leaving = "1";
+      toast.classList.add("leaving");
+      // Keep in sync with toast-out animation duration in styles.css.
+      setTimeout(() => toast.remove(), 200);
+    };
+    close.addEventListener("click", dismiss);
+
+    const duration = opts.duration ?? _TOAST_DEFAULTS[safeKind];
+    if (duration > 0) setTimeout(dismiss, duration);
+    return dismiss;
   };
 
+  // Minimal inline ✓/✗ next to the Test button. The verbose detail
+  // ("Authenticated as …") is fired as a toast so the row itself stays
+  // compact. ``setResult`` returns nothing — the Toast is side-effectful.
   const setResult = (collector, ok, detail, pending = false) => {
     const node = document.querySelector(`[data-result-for="${collector}"]`);
     if (!node) return;
     if (pending) {
-      node.className = "test-result pending";
-      node.textContent = detail || "Testing…";
+      node.className = "test-result compact pending";
+      node.textContent = "…";
+      node.title = "Testing…";
       return;
     }
-    node.className = `test-result ${ok ? "ok" : "err"}`;
-    node.textContent = (ok ? "✓ " : "✗ ") + detail;
+    node.className = `test-result compact ${ok ? "ok" : "err"}`;
+    node.textContent = ok ? "✓" : "✕";
+    node.title = detail || "";
+    const kind = ok ? "ok" : "err";
+    const title = ok ? `${collector}: connected` : `${collector}: failed`;
+    showToast(detail || (ok ? "OK" : "Failed"), kind, { title });
   };
 
   const getFieldValue = (path) => {
@@ -134,15 +209,170 @@
     btn.hidden = !hasSaved;
   };
 
+  // Fallback placeholder for saved tokens when the server couldn't compute a
+  // preview (shouldn't happen with a current server, but keeps old clients
+  // paired with new servers — and vice versa — rendering something sane).
+  const FALLBACK_PREVIEW = "•••••••• (saved — leave blank to keep)";
+
+  // Remember each input's markup-authored placeholder so we can restore it
+  // when a token gets cleared. Without this we'd lose the "paste token" /
+  // "glpat-…" hints after the user clicks Clear.
+  const _originalPlaceholders = new WeakMap();
+
   const updateSecretPlaceholder = (input) => {
     const collector = input.dataset.secret;
+    if (!_originalPlaceholders.has(input)) {
+      _originalPlaceholders.set(input, input.placeholder || "");
+    }
     if (state.pendingClears.has(collector)) {
       input.placeholder = "Will clear on save — paste new token or save to remove";
-    } else if (state.secretsPresent[collector]) {
-      input.placeholder = "•••••••• (saved — leave blank to keep)";
-    } else {
-      // keep the markup-specified placeholder (e.g. "paste token")
+      return;
     }
+    if (state.secretsPresent[collector]) {
+      const preview = state.secretsPreview[collector];
+      input.placeholder = preview
+        ? `${preview} (saved — leave blank to keep)`
+        : FALLBACK_PREVIEW;
+      return;
+    }
+    input.placeholder = _originalPlaceholders.get(input) || "";
+  };
+
+  // ----- Multi-path repos_dir helpers -----
+
+  // Read whatever shape the server sent and always present the UI with an
+  // array. We never persist an empty array back to disk — ``saveReposDirs``
+  // filters blanks — so a user who removes all rows "resets" to unset (same
+  // as an empty string in the legacy single-path form). This keeps the boot
+  // path robust against a config.yaml that's been hand-edited to any shape.
+  const readReposDirs = () => {
+    const raw = state.config.repos_dir;
+    if (Array.isArray(raw)) return raw.slice();
+    if (typeof raw === "string" && raw.trim()) return [raw];
+    return [];
+  };
+
+  // Flush the DOM back into ``state.config.repos_dir``. Called on every input
+  // event and on every add/remove — so save() always sees the current UI
+  // state without having to re-scan the DOM.
+  const syncReposDirsToState = () => {
+    const rows = els("#repos-dirs-list .repos-row input");
+    state.config.repos_dir = rows.map((input) => input.value);
+  };
+
+  const updateRemoveButtons = () => {
+    // Only forbid removing the last row when it's non-empty. The user should
+    // always be able to clear everything (empty UI ⇒ empty config), so an
+    // empty last row keeps its remove button active.
+    const rows = els("#repos-dirs-list .repos-row");
+    const hasMeaningfulContent = rows.some(
+      (row) => row.querySelector("input").value.trim() !== "",
+    );
+    rows.forEach((row, idx) => {
+      const btn = row.querySelector(".btn-remove");
+      if (rows.length === 1 && !hasMeaningfulContent) {
+        btn.disabled = true;
+      } else {
+        btn.disabled = false;
+      }
+      // Aria label tells screen readers which row the button belongs to.
+      btn.setAttribute("aria-label", `Remove path ${idx + 1}`);
+    });
+  };
+
+  // Ask the server to pop a native folder picker. Returns the selected
+  // absolute path, or null if the user cancelled or the picker is
+  // unavailable on this platform (the caller falls back to typing).
+  const browseFolder = async (title) => {
+    try {
+      const data = await api("POST", "/api/browse-folder", { title });
+      if (!data || data.ok === false) {
+        if (data && data.error) showToast(data.error, "warn", { title: "Folder picker" });
+        return null;
+      }
+      if (data.cancelled) return null;
+      return data.path || null;
+    } catch (exc) {
+      showToast("Folder picker failed: " + (exc.message || exc), "err", {
+        title: "Folder picker",
+      });
+      return null;
+    }
+  };
+
+  const addReposRow = (value = "", { focus = false } = {}) => {
+    const list = el("#repos-dirs-list");
+    const row = document.createElement("div");
+    row.className = "repos-row";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.placeholder = "~/Code";
+    input.value = value;
+    input.setAttribute("aria-label", "Repository parent directory");
+    input.addEventListener("input", () => {
+      syncReposDirsToState();
+      updateRemoveButtons();
+    });
+
+    const browse = document.createElement("button");
+    browse.type = "button";
+    browse.className = "btn btn-ghost btn-inline btn-browse";
+    browse.textContent = "Browse…";
+    browse.setAttribute("aria-label", "Browse for repository parent directory");
+    browse.hidden = !state.folderPickerAvailable;
+    browse.addEventListener("click", async () => {
+      const picked = await browseFolder("Select a repository parent directory");
+      if (picked) {
+        input.value = picked;
+        syncReposDirsToState();
+        updateRemoveButtons();
+      }
+    });
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-remove";
+    btn.textContent = "\u00d7";  // multiplication sign, semantic "remove"
+    btn.addEventListener("click", () => {
+      const rows = els("#repos-dirs-list .repos-row");
+      if (rows.length === 1) {
+        // Last row — clear in place rather than leaving the user with zero
+        // inputs (confusing) or re-rendering from scratch (jittery).
+        input.value = "";
+        syncReposDirsToState();
+        updateRemoveButtons();
+        input.focus();
+        return;
+      }
+      row.remove();
+      syncReposDirsToState();
+      updateRemoveButtons();
+    });
+
+    row.appendChild(input);
+    row.appendChild(browse);
+    row.appendChild(btn);
+    list.appendChild(row);
+    if (focus) input.focus();
+  };
+
+  const bindReposDirs = () => {
+    const list = el("#repos-dirs-list");
+    list.innerHTML = "";
+    const values = readReposDirs();
+    if (values.length === 0) {
+      addReposRow("");
+    } else {
+      values.forEach((v) => addReposRow(v));
+    }
+    syncReposDirsToState();
+    updateRemoveButtons();
+    el("#repos-dirs-add").addEventListener("click", () => {
+      addReposRow("", { focus: true });
+      syncReposDirsToState();
+      updateRemoveButtons();
+    });
   };
 
   // ----- Binding -----
@@ -194,9 +424,10 @@
           input.value = "";
           updateSecretPlaceholder(input);
         }
-        setBanner(
+        showToast(
           `Saved ${collector} token will be removed from keychain and config on next save.`,
           "warn",
+          { title: "Token marked for removal" },
         );
       });
     });
@@ -205,15 +436,23 @@
       btn.addEventListener("click", () => runTest(btn.dataset.test));
     });
 
-    el("#vault_path").value = state.config.vault_path ?? "";
-    el("#vault_path").addEventListener("input", (e) => {
+    const vaultInput = el("#vault_path");
+    vaultInput.value = state.config.vault_path ?? "";
+    vaultInput.addEventListener("input", (e) => {
       state.config.vault_path = e.target.value;
     });
 
-    el("#repos_dir").value = state.config.repos_dir ?? "";
-    el("#repos_dir").addEventListener("input", (e) => {
-      state.config.repos_dir = e.target.value;
+    const vaultBrowse = el("#vault_path_browse");
+    vaultBrowse.hidden = !state.folderPickerAvailable;
+    vaultBrowse.addEventListener("click", async () => {
+      const picked = await browseFolder("Select your Obsidian vault folder");
+      if (picked) {
+        vaultInput.value = picked;
+        state.config.vault_path = picked;
+      }
     });
+
+    bindReposDirs();
 
     const schedule = state.config.schedule ?? {};
     if (schedule.morning) el("#schedule_morning").value = schedule.morning;
@@ -257,12 +496,18 @@
 
   // Build a request payload the server can use to test with the user's
   // in-flight form state — essential for first-run, before anything has been
-  // saved to disk.
-  const buildInFlightPayload = () => ({
-    repos_dir: state.config.repos_dir,
-    collectors: state.config.collectors || {},
-    secrets: { ...state.dirtySecrets },
-  });
+  // saved to disk. ``repos_dir`` goes as an array even for a single path so
+  // the server never has to branch on the shape — the save endpoint does the
+  // same for the same reason.
+  const buildInFlightPayload = () => {
+    const reposDirs = (state.config.repos_dir || [])
+      .filter((entry) => typeof entry === "string" && entry.trim());
+    return {
+      repos_dir: reposDirs,
+      collectors: state.config.collectors || {},
+      secrets: { ...state.dirtySecrets },
+    };
+  };
 
   const runTest = async (collector) => {
     setResult(collector, false, "Testing…", true);
@@ -278,13 +523,19 @@
     const node = el("#schedule-result");
     node.className = "test-result pending";
     node.textContent = action === "install" ? "Installing…" : "Removing…";
+    const toastTitle = action === "install" ? "Schedule installed" : "Schedule removed";
     try {
       const data = await api("POST", "/api/schedule", { action });
       node.className = `test-result ${data.ok ? "ok" : "err"}`;
       node.textContent = data.message || (data.ok ? "Done" : "Failed");
+      showToast(data.message || (data.ok ? "Done" : "Failed"), data.ok ? "ok" : "err", {
+        title: data.ok ? toastTitle : "Schedule failed",
+      });
     } catch (exc) {
+      const msg = exc.message || "Request failed";
       node.className = "test-result err";
-      node.textContent = exc.message || "Request failed";
+      node.textContent = msg;
+      showToast(msg, "err", { title: "Schedule failed" });
     }
   };
 
@@ -298,34 +549,46 @@
     if (!date) {
       node.className = "test-result err";
       node.textContent = "Pick a date first.";
+      showToast("Pick a date first.", "warn", { title: "Run" });
       return;
     }
     buttons.forEach((b) => (b.disabled = true));
     node.className = "test-result pending";
     // Intentionally vague on duration — a no-collector run finishes in
     // milliseconds, a full run with every collector enabled can take
-    // 30–60 s. The final banner reports the real duration so users see
-    // the truth either way.
+    // 30–60 s. The final toast reports the real duration either way.
     node.textContent = `Running ${mode} for ${date}…`;
+    const dismissRunning = showToast(`Running ${mode} for ${date}…`, "info", {
+      duration: 0,
+      title: "Run in progress",
+    });
     try {
       const data = await api("POST", "/api/run", { mode, date });
+      dismissRunning?.();
       if (data.ok) {
         const secs = (data.duration_ms / 1000).toFixed(1);
+        const msg = `Wrote ${data.note_name} in ${secs}s`;
         node.className = "test-result ok";
-        node.textContent = `Wrote ${data.note_name} in ${secs}s`;
+        node.textContent = msg;
+        showToast(msg, "ok", { title: `${mode} run complete` });
       } else {
+        const msg = data.error || "Run failed";
         node.className = "test-result err";
-        node.textContent = data.error || "Run failed";
+        node.textContent = msg;
+        showToast(msg, "err", { title: `${mode} run failed` });
       }
     } catch (exc) {
+      dismissRunning?.();
+      const msg = exc.message || "Request failed";
       node.className = "test-result err";
-      node.textContent = exc.message || "Request failed";
+      node.textContent = msg;
+      showToast(msg, "err", { title: `${mode} run failed` });
     } finally {
       buttons.forEach((b) => (b.disabled = false));
     }
   };
 
-  // Translate the server's per-collector backend map into a single banner
+  // Translate the server's per-collector backend map into a single toast
   // message. The old code showed a binary "all keychain / all yaml" which
   // hid mixed-state saves where the keychain rejected one token — users
   // deserve to know if a token is sitting in plaintext.
@@ -373,7 +636,10 @@
   };
 
   const save = async () => {
-    setBanner("Saving…", "ok");
+    // A sticky "Saving…" toast covers the whole round-trip; we dismiss
+    // it before showing the outcome so users see exactly one toast per
+    // save even on a fast loopback.
+    const dismissSaving = showToast("Saving…", "info", { duration: 0 });
     try {
       // Pending clears go in as empty strings, which the server interprets
       // as "delete the stored secret".
@@ -381,23 +647,34 @@
       for (const collector of state.pendingClears) {
         secretsPayload[collector] = "";
       }
+      // Send ``repos_dir`` as an array even if the user has only a single
+      // path — the server accepts both shapes but normalising here means the
+      // in-memory model and the disk model agree.
+      const configToSend = {
+        ...state.config,
+        repos_dir: (state.config.repos_dir || [])
+          .filter((entry) => typeof entry === "string" && entry.trim()),
+      };
       const data = await api("POST", "/api/config", {
-        config: state.config,
+        config: configToSend,
         secrets: secretsPayload,
       });
       state.dirtySecrets = {};
       state.pendingClears.clear();
       state.secretsPresent = data.secrets_present ?? state.secretsPresent;
+      state.secretsPreview = data.secrets_preview ?? state.secretsPreview;
       els("[data-secret]").forEach((input) => {
         input.value = "";
         updateSecretPlaceholder(input);
       });
       Object.keys(SECRET_FIELDS).forEach(refreshClearButton);
 
+      dismissSaving?.();
       const outcome = describeSaveOutcome(data);
-      setBanner(outcome.text, outcome.kind);
+      showToast(outcome.text, outcome.kind, { title: "Configuration saved" });
     } catch (exc) {
-      setBanner("Save failed: " + (exc.message || exc), "err");
+      dismissSaving?.();
+      showToast("Save failed: " + (exc.message || exc), "err", { title: "Save failed" });
     }
   };
 
@@ -421,18 +698,27 @@
       const data = await api("GET", "/api/config");
       state.config = data.config || {};
       state.secretsPresent = data.secrets_present || {};
+      state.secretsPreview = data.secrets_preview || {};
       state.keyringAvailable = Boolean(data.keyring_available);
+      state.folderPickerAvailable = Boolean(data.folder_picker_available);
       state.version = data.version || "";
       setText("#version", state.version ? `v${state.version}` : "");
+      bindFields();
+      // Announce keychain state *after* bindFields so the toast region
+      // has been painted — otherwise the toast slides in against an
+      // empty page, which looks like a mistake.
       if (!state.keyringAvailable) {
-        setBanner(
-          "No OS keychain available — tokens will be stored in config.yaml (chmod 600).",
+        showToast(
+          "Tokens will be stored in config.yaml (chmod 600).",
           "warn",
+          { title: "No OS keychain available", duration: 0 },
         );
       }
-      bindFields();
     } catch (exc) {
-      setBanner("Failed to load config: " + (exc.message || exc), "err");
+      showToast("Failed to load config: " + (exc.message || exc), "err", {
+        title: "Load failed",
+        duration: 0,
+      });
     }
   };
 

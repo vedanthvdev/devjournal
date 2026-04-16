@@ -191,21 +191,6 @@ html[data-theme="dark"] .icon-btn .icon-moon { display: none; }
   html:not([data-theme="light"]) .icon-btn .icon-moon { display: none; }
 }
 
-/* ---- Banner ---- */
-
-.banner {
-  border-radius: var(--radius);
-  padding: 0.7rem 0.9rem;
-  margin-bottom: 1rem;
-  font-size: 0.9rem;
-  border: 1px solid var(--border);
-  background: var(--surface-elev);
-}
-.banner.warn { border-color: var(--warn); color: var(--warn); }
-.banner.ok   { border-color: var(--ok);   color: var(--ok); }
-.banner.err  { border-color: var(--err);  color: var(--err); }
-.banner.hidden { display: none; }
-
 /* ---- Cards ---- */
 
 .card {
@@ -311,6 +296,106 @@ html[data-theme="dark"] .icon-btn .icon-moon { display: none; }
 }
 
 .btn-inline[hidden] { display: none; }
+
+/* ---- Multi-value field (e.g. repos_dirs) ---- */
+
+.field-multi {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.field-multi > legend {
+  color: var(--fg-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0;
+}
+
+.repos-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.repos-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.repos-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+}
+
+.repos-row input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.repos-row .btn-remove {
+  padding: 0 0.6rem;
+  font-size: 1rem;
+  line-height: 1;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.repos-row .btn-remove:hover {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.repos-row .btn-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.repos-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.repos-hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+/* Paired input + "Browse…" button. Used under the vault path field and
+   inside each repos row so the picker and the path input stay aligned. */
+.path-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.path-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.repos-row .btn-browse,
+.path-row .btn-browse {
+  padding: 0 0.75rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
 
 .secret-field .help-link {
   font-size: 0.78rem;
@@ -468,4 +553,114 @@ html[data-theme="dark"] .icon-btn .icon-moon { display: none; }
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+/* ---- Toasts ----
+ * Fixed top-right stack. Toasts slide in, auto-dismiss, and can be
+ * clicked to close early. We use CSS custom properties so the four
+ * kinds (ok / err / warn / info) share layout and differ only in
+ * accent colour. `@media (prefers-reduced-motion)` turns off the
+ * slide so the UI stays calm for users who asked for that.
+ */
+
+#toasts {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  pointer-events: none;
+  max-width: min(420px, calc(100vw - 2rem));
+}
+
+.toast {
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 1.25rem 1fr auto;
+  align-items: start;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(15, 17, 21, 0.12), 0 1px 2px rgba(15, 17, 21, 0.06);
+  animation: toast-in 0.22s ease-out;
+}
+
+.toast.leaving {
+  animation: toast-out 0.18s ease-in forwards;
+}
+
+.toast .toast-icon {
+  font-size: 1rem;
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+.toast .toast-body {
+  font-size: 0.88rem;
+  line-height: 1.3;
+  min-width: 0;
+  word-wrap: break-word;
+}
+
+.toast .toast-title {
+  font-weight: 600;
+  margin-bottom: 0.1rem;
+}
+
+.toast .toast-detail {
+  color: var(--fg-muted);
+  font-size: 0.82rem;
+}
+
+.toast .toast-close {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+  margin: -0.1rem 0 0 0;
+}
+.toast .toast-close:hover { color: var(--fg); }
+
+.toast.ok   { border-left-color: var(--ok);   }
+.toast.err  { border-left-color: var(--err);  }
+.toast.warn { border-left-color: var(--warn); }
+.toast.info { border-left-color: var(--accent); }
+
+.toast.ok   .toast-icon { color: var(--ok);   }
+.toast.err  .toast-icon { color: var(--err);  }
+.toast.warn .toast-icon { color: var(--warn); }
+.toast.info .toast-icon { color: var(--accent); }
+
+@keyframes toast-in {
+  from { transform: translateX(110%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes toast-out {
+  from { transform: translateX(0);    opacity: 1; }
+  to   { transform: translateX(110%); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+  .toast.leaving { animation: none; opacity: 0; }
+}
+
+/* Compact inline result indicator next to the Test button — the
+ * verbose "Authenticated as …" line has moved to a toast; we keep
+ * a single ✓/✗ glyph as persistent per-collector feedback. */
+.test-result.compact {
+  flex: 0 0 auto;
+  font-size: 1rem;
+  min-width: 1.25rem;
+  text-align: center;
 }
