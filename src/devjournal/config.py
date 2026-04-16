@@ -42,6 +42,47 @@ def _check_config_permissions(config_path: Path) -> None:
         pass
 
 
+# Collectors whose primary token can be stored in the OS keychain. Map each
+# collector to the yaml field that would normally hold the plaintext token —
+# when yaml is empty we consult the keychain before giving up.
+_KEYCHAIN_SECRET_KEYS: dict[str, str] = {
+    "jira": "api_token",
+    "gitlab": "token",
+    "github": "token",
+}
+
+
+def _resolve_keychain_secrets(config: dict[str, Any]) -> None:
+    """Fill empty token fields from the OS keychain, in-place.
+
+    Keeps existing YAML-configured tokens untouched (back-compat) — the
+    keychain only fills blanks. Silently no-ops when ``keyring`` is not
+    installed so the base package stays dependency-free.
+    """
+    try:
+        from devjournal.setup.secrets import SecretStore
+    except Exception:  # pragma: no cover — defensive; setup should always import
+        return
+
+    store = SecretStore()
+    if not store.keyring_available:
+        return
+
+    collectors = config.get("collectors")
+    if not isinstance(collectors, dict):
+        return
+
+    for name, yaml_key in _KEYCHAIN_SECRET_KEYS.items():
+        section = collectors.get(name)
+        if not isinstance(section, dict):
+            continue
+        if section.get(yaml_key):
+            continue  # yaml wins when populated
+        result = store.read(name, yaml_value=None)
+        if result.value:
+            section[yaml_key] = result.value
+
+
 def load_config(path: Path | None = None) -> dict[str, Any]:
     """Load and validate the YAML configuration file.
 
@@ -79,6 +120,8 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
 
     if config.get("repos_dir"):
         config["repos_dir"] = str(Path(config["repos_dir"]).expanduser())
+
+    _resolve_keychain_secrets(config)
 
     return config
 

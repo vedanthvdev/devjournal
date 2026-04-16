@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from devjournal.collector import Collector, CollectorResult
@@ -74,8 +75,13 @@ class Engine:
                 log.debug("Skipped collector (disabled): %s", cls.name)
         return enabled
 
-    def run_morning(self, target_date: date) -> None:
-        """Populate the morning agenda: active tickets and carry-forward items."""
+    def run_morning(self, target_date: date) -> Path:
+        """Populate the morning agenda: active tickets and carry-forward items.
+
+        Returns the path of the note that was written so callers (the CLI,
+        the setup-UI ``Run now`` button, etc.) can report it back to the
+        user.
+        """
         log.info("Running morning agenda for %s", target_date)
         note_path = ensure_daily_note(self._config["vault_path"], target_date)
         content = note_path.read_text()
@@ -96,9 +102,14 @@ class Engine:
             len(agenda_results),
             len(carry_items),
         )
+        return note_path
 
-    def run_evening(self, target_date: date) -> None:
-        """Populate the work log with the full day's activity."""
+    def run_evening(self, target_date: date) -> Path:
+        """Populate the work log with the full day's activity.
+
+        Returns the path of the note that was written so callers can
+        surface it (e.g. the UI's ``Run now`` banner).
+        """
         log.info("Running evening summary for %s", target_date)
         note_path = ensure_daily_note(self._config["vault_path"], target_date)
         content = note_path.read_text()
@@ -125,6 +136,7 @@ class Engine:
             len(results),
             total_items,
         )
+        return note_path
 
     def _collect_all(self, target_date: date) -> list[CollectorResult]:
         """Run every enabled collector's ``collect`` method.

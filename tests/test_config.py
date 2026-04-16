@@ -103,6 +103,69 @@ def test_confluence_prefers_atlassian_over_jira():
     assert cfg["api_token"] == "shared-tok"
 
 
+def _install_fake_keyring(monkeypatch, **seeded):
+    """Replace the real SecretStore factory used by config with one wired to
+    an in-memory FakeKeyring. Returns the fake so tests can seed more."""
+    from devjournal.setup import secrets as secrets_module
+    from tests.setup.test_secrets import FakeKeyring
+
+    fake = FakeKeyring()
+    for name, value in seeded.items():
+        fake.set_password(secrets_module.SERVICE_NAME, name, value)
+
+    real_store = secrets_module.SecretStore
+
+    def factory(*args, **kwargs):
+        # Zero-arg constructor is the one config.py uses.
+        if not args and not kwargs:
+            return real_store(backend=fake)
+        return real_store(*args, **kwargs)
+
+    monkeypatch.setattr(secrets_module, "SecretStore", factory)
+    return fake
+
+
+def test_keychain_fills_blank_token_fields(tmp_path, monkeypatch):
+    """_resolve_keychain_secrets must populate empty tokens from the keyring."""
+    _install_fake_keyring(monkeypatch, jira="keyring-jira", github="keyring-gh")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "vault_path: /tmp/vault\n"
+        "collectors:\n"
+        "  jira:\n"
+        "    enabled: true\n"
+        "    domain: x.atlassian.net\n"
+        "    email: u@e.com\n"
+        "    api_token: ''\n"
+        "  github:\n"
+        "    enabled: true\n"
+        "    username: octocat\n"
+        "    token: ''\n"
+    )
+    cfg = load_config(config_file)
+    assert cfg["collectors"]["jira"]["api_token"] == "keyring-jira"
+    assert cfg["collectors"]["github"]["token"] == "keyring-gh"
+
+
+def test_keychain_does_not_overwrite_yaml_token(tmp_path, monkeypatch):
+    """yaml-populated tokens must win over the keychain for back-compat."""
+    _install_fake_keyring(monkeypatch, jira="keyring-jira")
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "vault_path: /tmp/vault\n"
+        "collectors:\n"
+        "  jira:\n"
+        "    enabled: true\n"
+        "    domain: x.atlassian.net\n"
+        "    email: u@e.com\n"
+        "    api_token: 'yaml-wins'\n"
+    )
+    cfg = load_config(config_file)
+    assert cfg["collectors"]["jira"]["api_token"] == "yaml-wins"
+
+
 def test_confluence_own_config_takes_precedence():
     config = {
         "collectors": {

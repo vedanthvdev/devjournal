@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>devjournal setup</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <meta name="csrf-token" content="__CSRF_TOKEN__" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">◆</span>
+      <h1>devjournal setup</h1>
+      <span id="version" class="version"></span>
+    </div>
+    <div class="topbar-actions">
+      <button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle theme">
+        <svg class="icon-sun"  viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/></g></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5Z" fill="currentColor"/></svg>
+      </button>
+      <button id="done-btn" class="btn btn-ghost" type="button">Done</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="banner" class="banner hidden" role="status"></div>
+
+    <section class="card">
+      <header class="card-head"><h2>Vault</h2></header>
+      <div class="card-body">
+        <label class="field">
+          <span>Obsidian vault path</span>
+          <input id="vault_path" type="text" placeholder="~/Documents/Obsidian Vault" />
+        </label>
+        <label class="field">
+          <span>Local repos directory</span>
+          <input id="repos_dir" type="text" placeholder="~/Code" />
+        </label>
+      </div>
+    </section>
+
+    <section class="card" data-integration="jira">
+      <header class="card-head">
+        <h2>Atlassian <span class="sub">(Jira + Confluence)</span></h2>
+        <label class="switch"><input type="checkbox" data-enable="jira" aria-label="Enable Atlassian integration" /><span></span></label>
+      </header>
+      <div class="card-body">
+        <label class="field">
+          <span>Domain</span>
+          <input data-field="jira.domain" type="text" placeholder="yourco.atlassian.net" />
+        </label>
+        <label class="field">
+          <span>Email</span>
+          <input data-field="jira.email" type="email" placeholder="you@yourco.com" />
+        </label>
+        <div class="field secret-field">
+          <span>API token</span>
+          <div class="secret-row">
+            <input data-secret="jira" type="password" placeholder="paste token" autocomplete="off" aria-label="Atlassian API token" />
+            <button class="btn btn-ghost btn-inline" data-clear-secret="jira" type="button" hidden>Clear saved token</button>
+          </div>
+          <a class="help-link" href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">How to get this ↗</a>
+        </div>
+        <label class="field">
+          <span>Projects (comma-separated keys)</span>
+          <input data-field="jira.projects" type="text" placeholder="CAR, KTON" />
+        </label>
+        <label class="toggle-row">
+          <input type="checkbox" data-enable="confluence" />
+          <span>Also collect Confluence activity (same credentials)</span>
+        </label>
+        <div class="card-actions">
+          <button class="btn btn-secondary" data-test="jira" type="button">Test Jira</button>
+          <button class="btn btn-secondary" data-test="confluence" type="button">Test Confluence</button>
+          <span class="test-result" data-result-for="jira"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" data-integration="gitlab">
+      <header class="card-head">
+        <h2>GitLab</h2>
+        <label class="switch"><input type="checkbox" data-enable="gitlab" aria-label="Enable GitLab integration" /><span></span></label>
+      </header>
+      <div class="card-body">
+        <label class="field">
+          <span>Instance URL</span>
+          <input data-field="gitlab.url" type="url" placeholder="https://gitlab.com" />
+        </label>
+        <label class="field">
+          <span>Username</span>
+          <input data-field="gitlab.username" type="text" placeholder="your-handle" />
+        </label>
+        <div class="field secret-field">
+          <span>Personal access token (read_api)</span>
+          <div class="secret-row">
+            <input data-secret="gitlab" type="password" placeholder="glpat-…" autocomplete="off" aria-label="GitLab personal access token" />
+            <button class="btn btn-ghost btn-inline" data-clear-secret="gitlab" type="button" hidden>Clear saved token</button>
+          </div>
+          <a class="help-link" href="https://gitlab.com/-/user_settings/personal_access_tokens" target="_blank" rel="noopener">How to get this ↗</a>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-secondary" data-test="gitlab" type="button">Test connection</button>
+          <span class="test-result" data-result-for="gitlab"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" data-integration="github">
+      <header class="card-head">
+        <h2>GitHub</h2>
+        <label class="switch"><input type="checkbox" data-enable="github" aria-label="Enable GitHub integration" /><span></span></label>
+      </header>
+      <div class="card-body">
+        <label class="field">
+          <span>Username</span>
+          <input data-field="github.username" type="text" placeholder="your-handle" />
+        </label>
+        <div class="field secret-field">
+          <span>Personal access token (repo, read:user)</span>
+          <div class="secret-row">
+            <input data-secret="github" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" aria-label="GitHub personal access token" />
+            <button class="btn btn-ghost btn-inline" data-clear-secret="github" type="button" hidden>Clear saved token</button>
+          </div>
+          <a class="help-link" href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=devjournal" target="_blank" rel="noopener">How to get this ↗</a>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-secondary" data-test="github" type="button">Test connection</button>
+          <span class="test-result" data-result-for="github"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" data-integration="local_git">
+      <header class="card-head">
+        <h2>Local Git</h2>
+        <label class="switch"><input type="checkbox" data-enable="local_git" aria-label="Enable Local Git scanning" /><span></span></label>
+      </header>
+      <div class="card-body">
+        <p class="muted">Scans the repos directory for commits by your email. No token needed.</p>
+        <label class="field">
+          <span>Author email</span>
+          <input data-field="local_git.author_email" type="email" placeholder="you@yourco.com" />
+        </label>
+        <div class="card-actions">
+          <button class="btn btn-secondary" data-test="local_git" type="button">Test scan</button>
+          <span class="test-result" data-result-for="local_git"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" data-integration="cursor">
+      <header class="card-head">
+        <h2>AI agents</h2>
+        <label class="switch"><input type="checkbox" data-enable="cursor" aria-label="Enable AI agent transcript collection" /><span></span></label>
+      </header>
+      <div class="card-body">
+        <p class="muted">Parses local Cursor session transcripts. Claude Code and others coming soon.</p>
+        <div class="agent-row">
+          <span class="agent-name">Cursor</span>
+          <span class="test-result" data-result-for="cursor"></span>
+          <button class="btn btn-secondary" data-test="cursor" type="button">Detect</button>
+        </div>
+        <div class="agent-row muted">
+          <span class="agent-name">Claude Code</span>
+          <span class="pill">Coming soon</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section-divider">
+      <h2>Coming soon</h2>
+      <p class="muted">Meeting integrations will pull your calendar and attendance into each day's note.</p>
+    </section>
+
+    <section class="coming-soon-grid">
+      <div class="coming-soon-card"><span>Microsoft Teams</span><span class="pill">Coming soon</span></div>
+      <div class="coming-soon-card"><span>Slack</span><span class="pill">Coming soon</span></div>
+      <div class="coming-soon-card"><span>Zoom</span><span class="pill">Coming soon</span></div>
+      <div class="coming-soon-card"><span>Outlook</span><span class="pill">Coming soon</span></div>
+    </section>
+
+    <section class="card">
+      <header class="card-head"><h2>Schedule</h2></header>
+      <div class="card-body">
+        <div class="schedule-row">
+          <label class="field">
+            <span>Morning agenda</span>
+            <input id="schedule_morning" type="time" value="08:30" />
+          </label>
+          <label class="field">
+            <span>Evening summary</span>
+            <input id="schedule_evening" type="time" value="17:00" />
+          </label>
+          <label class="toggle-row">
+            <input id="schedule_weekdays" type="checkbox" checked />
+            <span>Weekdays only</span>
+          </label>
+        </div>
+        <div class="card-actions">
+          <button id="install-schedule" class="btn btn-secondary" type="button">Install / reinstall schedule</button>
+          <button id="remove-schedule" class="btn btn-ghost" type="button">Remove schedule</button>
+          <span id="schedule-result" class="test-result"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <header class="card-head"><h2>Run now</h2></header>
+      <div class="card-body">
+        <p class="muted">Update today's (or any other day's) note manually. Useful for backfilling or checking your setup before relying on the schedule.</p>
+        <div class="schedule-row">
+          <label class="field">
+            <span>Date</span>
+            <input id="run-date" type="date" aria-label="Date to generate the note for" />
+          </label>
+        </div>
+        <div class="card-actions">
+          <button id="run-morning" class="btn btn-secondary" type="button">Run morning (agenda)</button>
+          <button id="run-evening" class="btn btn-secondary" type="button">Run evening (full log)</button>
+          <span id="run-result" class="test-result"></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="save-row">
+      <span id="save-hint" class="muted">Changes stay in-memory until you save.</span>
+      <button id="save-btn" class="btn btn-primary" type="button">Save configuration</button>
+    </div>
+  </footer>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

@@ -9,6 +9,7 @@ Usage:
     devjournal run --morning     # Alias for morning
     devjournal run --date 2026-04-15  # Run for a specific date
     devjournal init              # Create config file from template
+    devjournal setup             # Launch the local browser-based setup UI
     devjournal schedule install  # Install OS-level scheduling (launchd / cron)
     devjournal schedule remove   # Remove installed schedule
 """
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import importlib.resources
 import logging
+import os
 import shutil
 import sys
 from datetime import date
@@ -70,6 +72,20 @@ def main(argv: list[str] | None = None) -> None:
     schedule_sub.add_parser("install", help="Install morning + evening schedule")
     schedule_sub.add_parser("remove", help="Remove installed schedule")
 
+    # -- setup UI --
+    setup_p = sub.add_parser("setup", help="Launch the local browser setup UI")
+    setup_p.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Print the URL instead of opening a browser window",
+    )
+    setup_p.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Bind port on 127.0.0.1 (default: a random free port)",
+    )
+
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -79,6 +95,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "init":
         _cmd_init()
+    elif args.command == "setup":
+        _cmd_setup(args)
     elif args.command == "schedule":
         _cmd_schedule(args)
     elif args.command in ("morning", "evening", "run", None):
@@ -102,8 +120,49 @@ def _cmd_init() -> None:
     print("Edit it with your API tokens, then run: devjournal evening")
 
 
+def _cmd_setup(args: argparse.Namespace) -> None:
+    """Launch the local browser-based setup UI."""
+    try:
+        from devjournal.setup import run_setup_ui
+    except ImportError as exc:  # pragma: no cover — import is stdlib-only
+        print(f"Failed to start setup UI: {exc}")
+        sys.exit(1)
+
+    run_setup_ui(
+        config_path=args.config,
+        port=args.port,
+        open_browser=not args.no_browser,
+    )
+
+
+def _offer_setup_ui(config_path: Path) -> bool:
+    """If we're on an interactive terminal, offer to launch the UI.
+
+    Returns True if the UI was launched (caller should re-check config).
+    """
+    if os.environ.get("DEVJOURNAL_NO_UI") == "1":
+        return False
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return False
+    print(f"\nNo config found at {config_path}.")
+    try:
+        answer = input("Launch the setup UI in your browser? [Y/n] ").strip().lower()
+    except EOFError:
+        return False
+    if answer and answer[0] != "y":
+        return False
+    from devjournal.setup import run_setup_ui
+    run_setup_ui(config_path=config_path)
+    return True
+
+
 def _cmd_run(args: argparse.Namespace) -> None:
     """Execute a morning or evening run."""
+    config_path = args.config or DEFAULT_CONFIG_PATH
+    if not config_path.exists() and _offer_setup_ui(config_path):
+        if not config_path.exists():
+            print("Setup UI closed without saving — nothing to do.")
+            return
     config = load_config(args.config)
     engine = Engine(config)
 

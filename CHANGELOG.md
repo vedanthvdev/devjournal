@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Setup UI** — new `devjournal setup` subcommand launches a local, browser-based wizard for configuring integrations and scheduling. Auto-opens on first run when no config exists.
+  - Stdlib-only HTTP server bound to `127.0.0.1` on a random port with per-session CSRF token, `Origin` / `Referer` checks, strict Content-Security-Policy, and 30-minute idle auto-shutdown.
+  - "Test connection" buttons for Jira, Confluence, GitLab, GitHub, Local Git, and Cursor — each hits a lightweight identity endpoint and returns a safe, human-readable result (no raw HTTP bodies).
+  - "Install / reinstall schedule" button wraps the existing launchd / cron installer.
+  - "Run now" card with a date picker (defaulting to today) and morning/evening buttons so users can backfill a note or verify their setup without leaving the wizard; runs are serialized behind a dedicated `run_lock` so a double-click gets `409 Conflict` instead of racing two writers on the same note file.
+  - Light / dark theme honouring `prefers-color-scheme` with a manual override persisted in `localStorage`.
+  - Disabled "Coming soon" placeholders for Microsoft Teams, Slack, Zoom, and Outlook.
+- **OS keychain secret storage** — tokens entered in the setup UI are stored in the macOS Keychain, freedesktop Secret Service, or Windows Credential Locker via the `keyring` library; `config.yaml` falls back to plaintext only when no backend is available. `load_config` transparently reads the keychain so existing YAML-based configs keep working.
+- "Clear saved token" affordance — per-secret button in the UI that deletes the token from both the keychain and `config.yaml` on the next save.
+- Save responses include a per-collector `secrets_backend` map (`"keyring"` / `"yaml"` / `"cleared"`) and a `write_errors` list so the UI can warn when the keychain rejects a write and the token falls back to plaintext instead of silently downgrading.
+- New optional install extra: `pip install devjournal[setup]` pulls in `keyring>=24`.
+- Planning doc `docs/plans/setup-ui.md` describing the architecture, security properties, and rollout.
 - `SECURITY.md` with vulnerability reporting policy and scope
 - `CODE_OF_CONDUCT.md` based on Contributor Covenant v2.1
 - `CHANGELOG.md` in Keep a Changelog format
@@ -21,15 +33,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Renamed default branch from `main` to `master`
 - Updated workflow triggers to reference `master`
 - Dropped deprecated `License ::` classifier in favour of PEP 639 SPDX license expression
+- `Engine.run_morning` and `Engine.run_evening` now return the `Path` of the note they wrote so callers (CLI and the setup UI's "Run now" button) can surface the file name in their completion message
+- Setup UI's `/api/run` now wraps the `Engine()` constructor and the deferred `load_config` / `Engine` imports in the same error-handling try block as the run itself, so a future eager-auth collector that raises in `__init__` (or any `ImportError` in `devjournal.engine`) surfaces as a clean `ok: false` JSON response rather than a torn socket
+- Setup UI's "Run now" progress text is now a neutral "Running `<mode>` for `<date>`…" instead of a hard-coded "this can take 30–60 s" — the actual duration is reported in the result banner, and no-collector runs that finish in milliseconds no longer claim they'll take a minute
+- `/api/run` now distinguishes "config file is missing" from "config is missing required fields" in its error message, so a user whose config was deleted between save and run gets an accurate prompt instead of being told to fix a vault_path that was actually correct
 
 ### Security
 - Broadened Cursor-session token redaction to cover GitHub fine-grained PATs (`github_pat_…`), additional `ghX_` prefixes (`ghu_`, `ghs_`, `ghr_`), AWS access keys (`AKIA…`), JWTs (`eyJ…`), and more Slack token types (`xoxa-`, `xoxr-`)
 - Tightened `sk-` and `Bearer` patterns to require token-shaped payloads so prose like `sk-learn` or `Bearer token authentication` no longer over-matches
 - Pinned `AKIA…` and `eyJ…` to case-sensitive matching via `(?-i:…)` so lowercase prose cannot be silently eaten
+- Setup UI's same-origin check now fails closed when both `Origin` and `Referer` are absent on mutating requests (defense-in-depth alongside the CSRF token)
+- Setup UI binds loopback-only: `build_server` rejects non-loopback hosts and the `--host` CLI flag was removed so users cannot accidentally expose the wizard on a LAN interface
+- Setup UI's config write is now atomic (tempfile + `os.replace`) and the file descriptor is created with mode `0o600`, closing a TOCTOU window where the file briefly existed with umask-default permissions
+- Setup UI caps request bodies at 1 MiB and rejects malformed `Content-Length` headers with a 400 instead of a stdlib 500
+- Setup UI's JSON body parser now uses a private `_BadRequest` exception instead of string sentinels, closing a (theoretical) collision where a client could send a JSON-encoded string equal to `"__invalid__"` and coax the server into treating a valid payload as a parse failure
+- `/api/test/<collector>` now validates that the request body is a JSON object before dereferencing it; previously a non-dict payload (e.g. `[1, 2, 3]`) crashed the handler with `AttributeError` and dropped the connection instead of returning 400
+- Atomic config write tolerates platforms where `os.fchmod` is unavailable (Windows on CPython < 3.13) — the call is now guarded and we rely on the post-`os.replace` `path.chmod(0o600)` fallback, plus the raw file descriptor is no longer leaked when `os.fchmod` raises before `os.fdopen` takes ownership
+- `build_server` now chmods the parent directory of the caller-supplied `config_path` (or the default path) instead of unconditionally chmodding `~/.config/devjournal`, eliminating a test-suite side-effect on the user's real home directory and ensuring the `0o700` guarantee applies to non-default config locations
 
 ### Fixed
 - Corrected repository URL slug (`vedanthvasudev` → `vedanthvdev`) in `pyproject.toml`, `README.md`, and `CONTRIBUTING.md`
 - Narrowed SECURITY.md's URL-encoding claim to match actual coverage (GitHub usernames in API paths)
+- Setup UI's Confluence `Test` button now resolves the Atlassian token correctly when it lives only in the keychain (previously dead code left Confluence thinking no token existed)
+- `devjournal setup` test buttons work on first run — the server now accepts the in-flight form state, so users can validate credentials before the first save
+- Concurrent saves through the setup UI are serialized via a lock, preventing a torn `config.yaml` on rapid double-clicks
+- Dropped the module-global `_state` in the setup server in favour of per-handler class binding so tests (and any future multi-server use) don't race
+
+### Deferred
+- "Migrate existing YAML tokens to the keychain" prompt from the plan is tracked separately; YAML-configured tokens keep working today, and users can move them by pasting the value into the UI and saving
 
 ## [0.4.2] - 2026-04-16
 
