@@ -41,9 +41,12 @@ def test_run_evening_creates_note(tmp_path):
     config = _make_config(tmp_path, [])
     engine = Engine(config)
     target = date(2026, 4, 15)
-    engine.run_evening(target)
+    returned = engine.run_evening(target)
     note = tmp_path / "vault" / "Journal" / "Daily" / "2026-04-15.md"
     assert note.exists()
+    # The return value lets callers (CLI, setup UI's "Run now") surface the
+    # note path back to the user without re-implementing the filename rule.
+    assert returned == note
     content = note.read_text()
     assert "daily_note" in content
 
@@ -52,9 +55,10 @@ def test_run_morning_creates_note(tmp_path):
     config = _make_config(tmp_path, [])
     engine = Engine(config)
     target = date(2026, 4, 15)
-    engine.run_morning(target)
+    returned = engine.run_morning(target)
     note = tmp_path / "vault" / "Journal" / "Daily" / "2026-04-15.md"
     assert note.exists()
+    assert returned == note
 
 
 def test_engine_handles_collector_failure(tmp_path):

@@ -13,16 +13,35 @@ devjournal evening   # populate today's work log
 ## Quick Start
 
 ```bash
-pip install devjournal
-devjournal init          # creates ~/.config/devjournal/config.yaml
+pip install 'devjournal[setup]'
+devjournal setup         # opens the config UI in your browser
 ```
 
-Edit the config with your API tokens, then:
+The setup UI walks you through every integration, stores tokens in your OS keychain (macOS Keychain / Secret Service / Windows Credential Locker), and can install the morning / evening schedule in one click. See [Setup UI](#setup-ui) below.
+
+**Or configure by hand** — edit `~/.config/devjournal/config.yaml` directly:
 
 ```bash
+pip install devjournal
+devjournal init          # creates ~/.config/devjournal/config.yaml
 devjournal evening       # run it once to see it work
 devjournal schedule install  # set up automatic daily runs
 ```
+
+## Setup UI
+
+Run `devjournal setup` (or just `devjournal` with no existing config — it'll offer to launch the UI). A small local web server opens in your default browser at a random `127.0.0.1` port; when you click **Done** or close the terminal with Ctrl-C, the server exits.
+
+The UI lets you:
+
+- Toggle each integration (Atlassian/Jira + Confluence, GitLab, GitHub, Local Git, Cursor) on or off.
+- Paste tokens that are stored in the OS keychain by default (falls back to `config.yaml` with `chmod 600` when no keychain backend is available).
+- Run a **Test connection** check against every integration before saving.
+- Set morning / evening times and the "weekdays only" flag.
+- Install, reinstall, or remove the OS schedule.
+- Switch between light and dark themes; your choice is remembered in `localStorage`.
+
+The server binds to `127.0.0.1` only, rejects cross-origin requests, and every mutating call requires a per-session CSRF token. Tokens are never returned to the browser once saved — the UI shows saved tokens as `••••••••` and keeps the real value on the server side.
 
 ## How It Works
 

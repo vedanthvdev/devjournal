@@ -1,8 +1,12 @@
 # devjournal configuration
 # ========================
+# Tip: run `devjournal setup` for an interactive browser-based editor that
+# stores tokens in your OS keychain. This file is the manual fallback.
+#
 # Edit this file with your settings, then run: devjournal evening
 #
-# Tip: keep this file chmod 600 — it contains API tokens.
+# Tip: keep this file chmod 600 — it contains API tokens when the keychain
+# is unavailable.
 
 # Path to your Obsidian vault (the folder containing your Journal/ directory)
 vault_path: ~/Documents/Obsidian Vault
